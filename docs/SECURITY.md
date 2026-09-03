@@ -34,12 +34,13 @@ also exercised against a real target: L6/L11's integration tests run real
 `@supabase/lite@0.9.0` server, and the redaction pipeline above (not a fake-
 target substitute) processes every real response.
 
-**Still not implemented against any real backend** (no OTP/recovery-code
-flow, client-secret/JWT-secret/DB-password config redaction, or hosted-
-project-identifier aliasing exist yet, because none of those flows exist
-without either a hosted target (L13, out of scope this sprint) or
-Supabase-local (L7, blocked by this environment's Docker access — see
-`docs/LIMITATIONS.md`).
+**Still not exercised end to end** (no OTP/recovery-code flow, and
+hosted-project-identifier aliasing has no code path yet, because that flow
+only exists against a hosted target — L13, out of scope this sprint). The
+`supabase-local` driver (L7/L8) does hold real DB passwords and JWT secrets
+in memory; they are put into the `SecretVault` and never appear in a
+`RawOperationResult`, but a dedicated config-redaction corpus for them is
+not yet part of the secret-corpus suite.
 
 ## Structural secret detector (secondary defense)
 
@@ -80,8 +81,8 @@ corpus suite.
 
 - Hosted safety flags (`--allow-hosted*`) are parsed but not enforced
   against anything real, because no hosted driver exists (L13).
-- Real HTTP transport exists for the Supalite family (L6/L11), so header/
-  query-string redaction is exercised there for real, not only against
-  fake-target fixtures — but never against Supabase-local or hosted
-  Supabase, since neither has a driver (L7/L8/L13; see
+- Real HTTP transport exists for the Supalite family (L6/L11) and for
+  `supabase-local` (L7/L8/L11), so header/query-string redaction is
+  exercised there for real, not only against fake-target fixtures — but
+  never against hosted Supabase, which has no driver (L13; see
   `docs/LIMITATIONS.md`).

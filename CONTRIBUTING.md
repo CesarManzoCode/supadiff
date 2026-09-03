@@ -1,10 +1,9 @@
 # Contributing
 
-This repository implements Implementation DAG layers L0-L6 and L9-L12 of
-the Architecture Contract. L7 (Supabase-local) and L8 (upgrade
-verification) are not implemented — blocked in this environment by Docker
-registry access, not by design; L13/L14 were out of scope. Read
-`docs/LIMITATIONS.md` before assuming any capability beyond what it lists.
+This repository implements Implementation DAG layers L0-L12 of the
+Architecture Contract. L13 (hosted target) and L14 (documentation/release
+evidence gate) are out of scope for this sprint. Read `docs/LIMITATIONS.md`
+before assuming any capability beyond what it lists.
 
 ## Before changing anything
 
@@ -50,28 +49,31 @@ and requires a contract change first — do not add one locally.
 
 One JSON file per entry under `divergences/active/`, validated by
 `parseKnownDivergence`. `*` is rejected for `versionRange` and
-`observableSelector` — always name the exact path and range. See
-`docs/DIVERGENCES.md` for the matching semantics this delivery actually
-implements (selector-exact, not yet predicate-evaluated).
+`observableSelector` — always name the exact path and range. The
+`expectedFailure` predicate is evaluated against the real observed failure
+facts (`{reference, candidate}` over each side's contract fields), so it
+must assert the _shape_ of the specific failure, not just the selector — see
+`divergences/active/supalite-signed-url-key-name.json` for a worked example
+and `docs/DIVERGENCES.md` for the full matching semantics.
 
 ## Adding a target driver
 
-The Supalite family (`packages/targets/src/supalite/`) is the worked
-example: `TargetDriver`/`TargetSession` (`@supadiff/engine/spi`) in
-`@supadiff/targets`, importing only the `spi` entrypoint — never
-`@supadiff/engine`'s main entrypoint. The boundary checker
-(`scripts/boundary-check.mjs`) will reject the wrong import. A
-`supabase-local` driver would follow the same shape (Docker Compose-
-provisioned instead of `lite start`-provisioned) — not started in this
-sprint because this environment cannot run Docker (see
-`docs/LIMITATIONS.md`), not because the design is undecided.
+`packages/targets/src/supalite/` and `packages/targets/src/supabase-local/`
+are the worked examples: a `TargetDriver`/`TargetSession` pair
+(`@supadiff/engine/spi`) in `@supadiff/targets`, importing only the `spi`
+entrypoint — never `@supadiff/engine`'s main entrypoint. The boundary
+checker (`scripts/boundary-check.mjs`) will reject the wrong import. If the
+new target speaks the Supabase REST contract, reuse
+`src/shared/rest-dispatch.ts` rather than re-implementing the
+`@supabase/supabase-js` per-operation translation.
 
-Never write driver code for a target you cannot actually run and verify in
-this environment. A driver that has never executed against the real thing
-it claims to drive is not evidence of anything, and claiming a layer
-complete on the strength of unexecuted code is exactly the overclaiming
-this project exists to prevent. Precisely document the blocker instead
-(`docs/LIMITATIONS.md`) and continue with other, unblocked work.
+Never write driver code for a target you cannot actually run and verify. A
+driver that has never executed against the real thing it claims to drive is
+not evidence of anything. If a target genuinely cannot be run in your
+environment (e.g. no Docker), stop the layer precisely and document the
+blocker in `docs/LIMITATIONS.md` rather than shipping unexecuted code —
+that is exactly what happened to L7/L8 in the original sandbox, and they
+were only marked done once they ran for real.
 
 ## Required evidence for any change
 

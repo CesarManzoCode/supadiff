@@ -6,53 +6,49 @@ diff, a schema diff, an upstream-suite replacement, or a generic fuzzer.
 
 ## What is proven right now
 
-This repository implements Implementation DAG layers **L0-L6, L9-L12** of
-the Architecture Contract: the deterministic comparison core (L0-L5, proven
-against fake targets), a real Supalite target family (L6), a dogfood fault
-lab and replay (L9), a state-aware reducer (L10), Storage peer comparison
-(L11), and seeded scenario generation (L12) — all exercised against the
-real, exact-pinned `@supabase/lite@0.9.0` package, never a fake target,
-wherever this document says "real."
+This repository implements Implementation DAG layers **L0-L12** of the
+Architecture Contract: the deterministic comparison core (L0-L5, proven
+against fake targets), a real Supalite target family (L6), a real
+`supabase-local` target driver + Supalite ↔ Supabase-local peer comparison
+(L7), local Supabase upgrade verification (L8, `supadiff verify-upgrade`), a
+dogfood fault lab and replay (L9), a state-aware reducer (L10), Storage peer
+comparison including Supalite ↔ Supabase-local (L11), and seeded scenario
+generation (L12). "Real" throughout this document means the exact-pinned
+`@supabase/lite@0.9.0` package and/or a real Supabase stack brought up by the
+pinned `supabase` CLI 2.116.0 over Docker — never a fake target.
 
 ```
 ScenarioSpec → validation → canonical ExecutionPlan
-             → deterministic execution on fake OR real Supalite targets
+             → deterministic execution on fake, real Supalite, OR real
+               supabase-local (Docker) targets
              → raw observations → redaction → semantic observations
              → semantic comparison → divergence classification
              → deterministic artifact
-             → offline compare / inspect / replay / reduce via CLI
+             → offline compare / inspect / replay / reduce / verify-upgrade
 ```
 
-**L7 (Supabase-local) and L8 (upgrade verification) are not implemented.**
-Both require running a real Docker container, and this environment's egress
-proxy returns `403 Forbidden` on the Docker registry's blob CDN for every
-image pull, including `hello-world` — confirmed, not assumed. See
-"Supabase-local: blocked" below and `docs/LIMITATIONS.md`.
+**L13 (hosted target) and L14 (documentation/release evidence gate) are not
+implemented** — out of scope for this sprint. See `docs/LIMITATIONS.md` for
+the full, current list of what is and is not proven.
 
-Nothing in this repository claims Supabase-local, hosted Supabase, or
-Supabase's own upgrade behavior has been observed. See `docs/LIMITATIONS.md`
-for the full, current list of what is and is not proven.
+## L7/L8: implemented on a real Docker host
 
-## Supabase-local: blocked
+L7 and L8 were blocked in the original Claude Code Web sandbox purely because
+its egress proxy refused every Docker registry blob download (`docker pull
+hello-world` → 403). On a real Docker host (`docker pull hello-world` → PASS)
+they were implemented in full:
 
-```
-$ docker pull hello-world
-Using default tag: latest
-latest: Pulling from library/hello-world
-failed to copy: httpReadSeeker: failed open: failed to do request: Get
-"https://production.cloudfront.docker.com/registry-v2/...": Forbidden
-```
-
-`docker ps` and registry auth/manifest endpoints work; only the blob-CDN
-download itself is refused by this sandbox's network policy. Every attempt
-to pull any image (including `alpine:3.20`) fails identically. This blocks
-L7 (a real `supabase-local` target, normally Docker Compose-provisioned)
-and L8 (Docker-based local upgrade verification) at the execution level —
-not a design gap, an environment one. `verify-upgrade` remains wired into
-the CLI and returns exit 30 ("not implemented"), same as before this
-sprint; no `supabase-local` driver was written, because writing one that
-has never actually run against the thing it claims to drive would be
-exactly the overclaiming this project exists to prevent.
+- **`supabase-local` driver** (`packages/targets/src/supabase-local/`): a
+  full Supabase stack — Postgres + GoTrue + PostgREST + Storage API + Kong —
+  provisioned by the reproducibly pinned `supabase` CLI 2.116.0 over Docker
+  Compose. Pinning the CLI pins the image set. Same SPI shape as the Supalite
+  drivers, sharing the entire `@supabase/supabase-js@2.97.0` per-operation
+  dispatch with them.
+- **`supadiff verify-upgrade`** (`packages/targets/src/supabase-local/
+upgrade.ts`): mandatory dry-run, then a real Postgres 15 → 17 local upgrade
+  into a fresh workdir, verifying ID / sequence / Auth / RLS preservation and
+  that sessions are _not_ preserved (re-authentication required). Storage
+  preservation is recorded unsupported before any mutation.
 
 ## One real command against a fake target
 
@@ -74,21 +70,30 @@ scripted fake targets in lockstep, redacts and projects every observation,
 compares them under a real (if small) semantic rule policy, and writes a
 deterministic evidence bundle to `./supadiff-artifacts/<run-id>.supadiff/`.
 
-## One real command against a real target
+## Real commands against real targets
 
 ```bash
 corepack pnpm install --frozen-lockfile
-pnpm test:integration:supalite          # L6: real @supabase/lite@0.9.0, all 4 backends
-pnpm test:integration:peer-storage      # L11: real Storage peer comparison
-pnpm test:generators && pnpm test:generated-smoke   # L12: generated scenarios, one live sample
-pnpm test:fault-lab:replay              # L9: dogfood fault lab + `supadiff replay`
-pnpm test:fault-lab:reduce              # L10: state-aware reducer
+
+# Real @supabase/lite@0.9.0 subprocesses, no Docker
+pnpm test:integration:supalite            # L6: all 4 Supalite backends
+pnpm test:generators && pnpm test:generated-smoke   # L12: generated scenarios + one live sample
+pnpm test:fault-lab:replay                # L9: dogfood fault lab + `supadiff replay`
+pnpm test:fault-lab:reduce                # L10: state-aware reducer
+
+# Real supabase-local stack (pinned `supabase` CLI 2.116.0 over Docker) — needs Docker
+pnpm test:integration:peer-data-auth-rls  # L7: Supalite <-> supabase-local (Data+Auth+RLS) + failure modes
+pnpm test:integration:upgrade-local       # L8: supadiff verify-upgrade, real Postgres 15 -> 17
+pnpm test:integration:peer-storage        # L11: Supalite x2 and Supalite <-> supabase-local Storage
+
+supadiff verify-upgrade --from 15 --to 17            # L8 dry-run (prints the §12 flow, mutates nothing)
+supadiff verify-upgrade --from 15 --to 17 --execute  # L8 real upgrade verification
 ```
 
-Every one of these spawns a real `lite start` subprocess and talks to it
-over real HTTP via the real `@supabase/supabase-js@2.97.0` client — none of
-this is scripted. See `docs/TESTING.md` for what each command actually
-proves and `docs/TARGETS.md` for the per-backend capability matrix.
+Every one of these talks to a real target over real HTTP via the real
+`@supabase/supabase-js@2.97.0` client — none of it is scripted. See
+`docs/TESTING.md` for what each command proves and `docs/TARGETS.md` for the
+capability matrix and the `supabase-local` driver architecture.
 
 ## Artifact example
 
@@ -120,11 +125,13 @@ alternate accepted format alongside a ZIP — see `docs/REPRODUCIBILITY.md`).
 packages/
   spec/        canonical types, JSON Schemas, RFC 8785 canonicalization, operation catalog
   engine/      planning, lockstep execution, redaction, comparator, artifact assembly
-  targets/     concrete target drivers — real Supalite family (L6); no supabase-local (L7, blocked)
+  targets/     concrete target drivers — real Supalite family (L6), real supabase-local (L7),
+               shared REST dispatch, local upgrade verification (L8)
   reducer/     state-aware reduction (L10) — ddmin over the dependency graph, acceptance oracle
   generators/  seeded scenario generation (L12) — fast-check adapter, Data+Auth+RLS domain model
-  cli/         supadiff CLI: run / compare / inspect / replay / reduce (verify-upgrade: not implemented)
-scenarios/deterministic/              canonical L6/L11 scenario fixtures
+  cli/         supadiff CLI: run / compare / inspect / replay / reduce / verify-upgrade
+scenarios/deterministic/              canonical L6/L7/L11 scenario fixtures
+divergences/active/                   known-divergence registry (the signedUrl/signedURL entries)
 test/fixtures/, test/fault-lab/       the L0-L5 acceptance fixtures and the L9 dogfood fault lab
 docs/                                  see below
 ```
@@ -146,18 +153,16 @@ docs/                                  see below
 
 SupaDiff's README **does not** claim:
 
-- Supabase-local comparison works (L7 — blocked by this environment's Docker
-  registry access, see above; no driver was written)
-- Supabase-local upgrade verification works (L8 — same blocker)
-- Real Supabase (hosted) comparison works (L13 — out of scope for this sprint)
-- Real Supalite ↔ Supabase-local Storage comparison works — L11's Storage
-  evidence is real Supalite-vs-Supalite (two independent backends), not
-  Supalite-vs-Supabase-local, because L7 is blocked; see `docs/DIVERGENCES.md`
-  for the one genuine, reproduced Supalite bug this sprint's testing found
-  along the way (a Storage signed-URL response field-name mismatch)
+- Real Supabase (hosted) comparison works (L13 — out of scope for this sprint;
+  `parseTargetSpec` still rejects `supabase-hosted`)
+- The full Architecture Contract §12 upgrade surface is covered — L8 verifies
+  a **local** Postgres major-version upgrade (ID/sequence/Auth/RLS
+  preservation, no session preservation); Storage byte preservation across
+  the upgrade is explicitly recorded `unsupported`
 - A generic fuzzing framework or generic database reducer exists — L10's
   reducer and L12's generator are both scoped to SupaDiff's own domain model
   (Data+Auth+RLS scenarios), not general-purpose tools
+- Realtime, Edge Functions, or a dashboard/UI are covered — never in scope
 
 `docs/LIMITATIONS.md` is the authoritative, current list of what is and is
 not proven — read it before citing any result from this repository.

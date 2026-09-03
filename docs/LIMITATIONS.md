@@ -3,56 +3,87 @@
 This document exists to prevent overclaiming. Read it before citing any
 result from this repository.
 
-## Scope: L0-L6, L9-L12
+## Scope: L0-L12
 
 Implemented and tested against real evidence: the deterministic comparison
 core (L0-L5, proven against fake targets), the Supalite target family (L6,
-all four backends, real `@supabase/lite@0.9.0`), the dogfood fault lab and
-`replay` command (L9), the state-aware reducer and `reduce` command (L10),
-Storage peer comparison (L11), and seeded scenario generation (L12).
+all four backends, real `@supabase/lite@0.9.0`), the real `supabase-local`
+target driver and Supalite ↔ Supabase-local peer comparison (L7), local
+Supabase upgrade verification (L8, `supadiff verify-upgrade`), the dogfood
+fault lab and `replay` command (L9), the state-aware reducer and `reduce`
+command (L10), Storage peer comparison including Supalite ↔ Supabase-local
+(L11), and seeded scenario generation (L12).
 
-**Not implemented: L7 (Supabase-local), L8 (upgrade verification), L13
-(hosted target), L14 (documentation/release evidence gate).** Realtime,
-Edge Functions, a dashboard/UI, a generic fuzzing framework, and a generic
-database reducer were never in scope for any layer in this sprint (see the
-Architecture Contract's own non-goals, §20).
+**Not implemented: L13 (hosted target), L14 (documentation/release evidence
+gate).** Realtime, Edge Functions, a dashboard/UI, a generic fuzzing
+framework, and a generic database reducer were never in scope for any layer
+in this sprint (see the Architecture Contract's own non-goals, §20).
 
-## L7/L8: blocked by environment, not by design
+## L7/L8: implemented on a real Docker host
 
-L7 (a real `supabase-local` target, normally provisioned via Docker
-Compose) and L8 (Docker-based local upgrade verification) require running a
-real Docker container. This sandbox's egress proxy returns `403 Forbidden`
-on the Docker registry's blob-CDN download for **every** image pull:
+L7 (a real `supabase-local` target) and L8 (`verify-upgrade`) were blocked in
+the original Claude Code Web sandbox purely because that sandbox's egress
+proxy refused every Docker registry blob download (`docker pull hello-world`
+→ 403). They were implemented in this sprint on a local Fedora host where
+Docker works normally (`docker pull hello-world` → PASS).
 
-```
-$ docker pull hello-world
-failed to copy: httpReadSeeker: failed open: failed to do request:
-Get "https://production.cloudfront.docker.com/registry-v2/...": Forbidden
+- **L7** (`packages/targets/src/supabase-local/`,
+  `pnpm test:integration:peer-data-auth-rls`): a `supabase-local`
+  `TargetDriver`/`TargetSession` pair — same SPI shape as the Supalite
+  drivers, importing only `@supadiff/engine/spi` — provisioned by a
+  reproducibly pinned `supabase` CLI (**2.116.0**) over Docker Compose.
+  Pinning the CLI pins the whole service image set. Data + Auth + native RLS
+  - Storage all `exact`; failure modes (container death → `target-lost` →
+    inconclusive; port collision → bounded retry; identity mismatch →
+    inconclusive; cleanup/recovery) all covered. The peer scenario
+    `scn.peer-data-auth-rls-smoke` runs to completion on
+    `supalite-sqlite-postgres` (reference) and `supabase-local` (candidate)
+    against both real stacks, and every compared observable path agrees.
+- **L8** (`packages/targets/src/supabase-local/upgrade.ts`, `supadiff
+verify-upgrade`, `pnpm test:integration:upgrade-local`): a mandatory
+  dry-run, then a real Postgres 15 → 17 local upgrade (pg*dump → fresh
+  destination stack in a new workdir → restore). Verified: ID / sequence /
+  Auth / RLS preservation, no session preservation (the pre-upgrade token is
+  rejected), re-authentication with the same credentials yields a new
+  session, and Storage preservation is recorded `unsupported` \_before* any
+  Storage mutation. `verify-upgrade` is no longer a not-implemented stub.
 
-$ docker pull alpine:3.20
-failed to copy: httpReadSeeker: failed open: failed to do request:
-Get "https://production.cloudfront.docker.com/registry-v2/...": Forbidden
-```
-
-`docker ps` and the daemon itself work; registry authentication and
-manifest resolution succeed; only the blob-CDN download that a real `pull`
-needs is refused. This makes any real Docker container unusable here,
-regardless of image. Per this sprint's explicit instruction to stop a
-layer precisely rather than fake it, **no `supabase-local` driver, no
-`TargetTransitionDriver`, and no `verify-upgrade` implementation were
-written** — writing driver code that has never actually run against the
-thing it claims to drive, with no way to verify it in this environment,
-would be exactly the overclaiming this project exists to prevent.
-`verify-upgrade` remains wired into the CLI's command dispatch and returns
-exit 30 ("not implemented"), unchanged from before this sprint.
-
-This is an environment fact, not a permanent one: a session with real
-Docker registry access could implement L7/L8 using the same architecture
-already proven for L6 (a `TargetDriver`/`TargetSession` pair in
-`@supadiff/targets`, importing only `@supadiff/engine/spi`).
+Exact versions: supabase CLI 2.116.0; images postgres 17.6.1.165 (and
+15.8.1.085 for the upgrade source), gotrue v2.196.0, postgrest v16.1,
+storage-api v1.70.3, kong 2.8.1 — real `sha256:` container digests recorded
+in `TargetIdentity.containerDigests`, see `docs/TARGETS.md`.
 
 ## What L6-L12 actually proved, precisely
 
+- **L7** (`packages/targets/src/supabase-local/`,
+  `pnpm test:integration:peer-data-auth-rls`): a real `supabase-local` stack
+  (pinned `supabase` CLI 2.116.0 over Docker Compose — postgres 17.6.1.165,
+  gotrue v2.196.0, postgrest v16.1, storage-api v1.70.3, kong 2.8.1) driven
+  by the same `@supabase/supabase-js@2.97.0` client as the Supalite family
+  through a shared REST dispatch. The peer scenario `scn.peer-data-auth-rls-
+smoke` (schema+RLS, signup, owner-authorized insert, session read,
+  post-insert readback, owner select, anon select) runs to completion on
+  `supalite-sqlite-postgres` (reference) and `supabase-local` (candidate);
+  every compared observable path agrees (owner sees own row, anon sees none
+  — the RLS behavior compared for real), with target-local UUIDs/timestamps
+  excluded per §9.3. Failure modes covered: killing the container stack →
+  `target-lost` → the engine finalizes `inconclusive`; a wrong requested CLI
+  version → identity mismatch → `inconclusive` with no plan frozen; two
+  concurrent provisions get distinct project ids and ports; teardown +
+  `forceCleanupProject` remove every container and network.
+- **L8** (`packages/targets/src/supabase-local/upgrade.ts`, `supadiff
+verify-upgrade`, `pnpm test:integration:upgrade-local`): a real local
+  Postgres 15 → 17 upgrade. Mandatory dry-run first (19-step plan, nothing
+  provisioned). Then: source stack at pg 15, fixture applied, owner signed
+  up, rows inserted, sequence advanced; snapshot of row ids / sequence
+  `last_value` / `auth.users` / `pg_policies`; `pg_dump`; **fresh destination
+  workdir**, stack at pg 17, restore. Verified — the pre-upgrade access token
+  is **rejected** by the new stack (no session preservation), the owner
+  **re-authenticates** with the same credentials and gets a new session, and
+  row IDs / sequence values / `auth.users` / RLS policies are all preserved
+  (structurally and functionally: owner sees own rows, anon denied). Storage
+  preservation is recorded `skipped` (unsupported) _before_ any Storage
+  mutation.
 - **L6** (`packages/targets/src/supalite/`, `pnpm test:integration:supalite`):
   a real `lite start` subprocess, real `@supabase/supabase-js@2.97.0`
   traffic, on all four `supalite-*` backends. Found and reproduced a real
@@ -77,16 +108,16 @@ capabilities.ts` — capability preflight resolves the whole
   3x flake-check before any reduction and a signature-identity oracle that
   correctly excludes `scenarioDigest` itself (§9.3) so a shrunk scenario is
   still recognized as reproducing the same divergence.
-- **L11** (`packages/targets/test/integration/storage.test.ts`,
-  `pnpm test:integration:peer-storage`): bucket creation, upload/download/
-  copy byte-identity (real SHA-256 digests of real bytes, not metadata),
-  list, remove, move, and signed-URL creation/redemption, compared for
-  real between two independently provisioned real Supalite backends
-  (`supalite-sqlite-postgres`, `supalite-pglite`) — **not** Supalite vs.
-  Supabase-local, because L7 is blocked (see above); this substitution is
-  documented in the test itself, not silently presented as the contract's
-  literal ask. This testing found a real, reproduced Supalite bug — see
-  "The signedUrl/signedURL divergence" below.
+- **L11** (`packages/targets/test/integration/storage.test.ts` +
+  `peer-storage-local.test.ts`, `pnpm test:integration:peer-storage`): bucket
+  creation, upload/download/copy byte-identity (real SHA-256 of real bytes,
+  not metadata), list, remove, move, metadata readback, and signed-URL
+  creation/redemption — compared for real (a) between two independently
+  provisioned real Supalite backends and (b) between a real `supabase-local`
+  stack (reference) and a real `supalite-sqlite-postgres` backend (candidate).
+  The Supalite ↔ Supabase-local run confirms byte-identity everywhere except
+  signed-URL redemption, which genuinely diverges — see "The signedUrl/
+  signedURL divergence" below.
 - **L12** (`packages/generators/`, `pnpm test:generators` +
   `pnpm test:generated-smoke`): a `fast-check@4.9.0`-backed generator for
   the Data+Auth+RLS domain (owner-scoped RLS schema, precondition-checked
@@ -96,24 +127,31 @@ capabilities.ts` — capability preflight resolves the whole
 
 ## The signedUrl/signedURL divergence
 
-Found during L11 testing, not fabricated: `@supabase/lite@0.9.0`'s
-`POST /storage/v1/object/sign/:bucket/*path` response uses the JSON key
-`signedUrl` (lowercase "rl"). The real Supabase Storage REST API contract —
-and the official `@supabase/storage-js@2.97.0` client bundled inside
-`supabase-js`, verified directly against its bundled source this sprint —
-reads `signedURL` (capital "URL") to build `createSignedUrl()`'s returned
-URL. The mismatch leaves the client-constructed URL as
-`${baseUrl}/storage/v1undefined`; redeeming it through the official client
-returns Supalite's admin-dashboard HTML with HTTP 200, not the uploaded
-object's bytes. Reproduced directly against the raw HTTP API (bypassing
-the client) to confirm the server's own redemption endpoint serves the
-correct bytes when given the correctly key-cased path — isolating the bug
-to this one response field name. Recorded as `storage.signed-url.redeem =
-unsupported` with full evidence in `packages/targets/src/supalite/
-capabilities.ts`, deliberately left out of the L11 scenario's capability
-requirements so the rest of the Storage surface still runs and the
-comparator can verify the (shared, deterministic) broken behavior is at
-least identical across backends — see `docs/DIVERGENCES.md`.
+Found during L11 testing and now **confirmed against both real targets** as a
+genuine cross-target divergence:
+
+- `@supabase/lite@0.9.0`'s `POST /storage/v1/object/sign/:bucket/*path`
+  response uses the JSON key `signedUrl` (lowercase "rl").
+- `supabase/storage-api@v1.70.3` (the real service image the pinned CLI
+  brings up) returns `signedURL` (capital "URL") — which is exactly what the
+  official `@supabase/storage-js@2.97.0` client bundled inside `supabase-js`
+  reads to build `createSignedUrl()`'s returned URL.
+
+So against `supabase-local`, `createSignedUrl()` works end to end — redeeming
+the returned URL returns the uploaded object's bytes with HTTP 200. Against
+Supalite, the client leaves its URL undefined, the scenario redeems
+`${baseUrl}/storage/v1undefined`, and Supalite serves that as its
+admin-dashboard HTML with HTTP 200: a successful-looking response carrying
+the wrong content.
+
+`peer-storage-local.test.ts` proves the comparator reports this as
+`new-divergence` at `step.redeem` `/bytesDigest` and `/contentLength` without
+a registry, and as `known-divergence` with it. It is registered as
+`div.supalite-signed-url-key-name` / `div.supalite-signed-url-key-name-length`
+in `divergences/active/` — the first genuine `KnownDivergence` entries in
+this repository, exactly as `docs/DIVERGENCES.md` predicted once L7 unblocked.
+The Supalite capability record `storage.signed-url.redeem = unsupported` (in
+`packages/targets/src/supalite/capabilities.ts`) is unchanged.
 
 ## Scoped simplifications inside L0-L5 (unchanged by this sprint)
 
@@ -133,10 +171,24 @@ out at its point of implementation with a contract section reference:
    `--max-hosted-cost-usd` are accepted by the CLI argument parser but have
    no effect, because no hosted driver exists to gate (L13, not started).
 
-4. **`verify-upgrade`** is wired into the CLI's command dispatch and
-   explicitly returns "not implemented" (exit 30) — see L7/L8 above.
+4. **`supabase-local` schema application and Data-API grants.** The
+   `supabase-local` driver applies the scenario's schema over the direct
+   superuser Postgres connection and then runs a fixed set of
+   `anon`/`authenticated`/`service_role` grants (the same effect the Supabase
+   cloud default `auto_expose_new_tables = true` has), plus permissive
+   `authenticated` policies on `storage.buckets`/`storage.objects`, so one
+   scenario authored against Supalite runs identically here. This is a
+   documented driver normalization, called out in `docs/TARGETS.md`; it does
+   not change any compared observable behavior.
 
-5. **Target identity mismatch detection is exact-match only.** §2.7 allows
+5. **Storage `list` entry-name shape differs by design** between Supalite
+   (full object path in `name`) and real Supabase Storage (name relative to
+   the listed prefix). The L11 Supalite ↔ Supabase-local peer test treats
+   `/entries` as an `explicit-ignore` with a rationale; it is a real,
+   documented behavioral difference, not the byte-identity/redemption
+   behavior that test measures.
+
+6. **Target identity mismatch detection is exact-match only.** §2.7 allows
    "unless the target policy explicitly permits a range" as an exception to
    a requested-vs-observed version mismatch producing an inconclusive
    outcome; no such range-permitting policy field is modeled yet in
@@ -170,8 +222,8 @@ out at its point of implementation with a contract section reference:
 ## Honest bottom line
 
 **SupaDiff's deterministic comparison core, real Supalite target family,
-fault lab/replay, reducer, Storage peer comparison, and scenario generation
-are implemented and proven with real evidence. Supabase-local (L7),
-upgrade verification (L8), and a hosted target (L13) are not implemented —
-the first two because this environment cannot run Docker, the third
-because it was out of scope for this sprint.**
+real `supabase-local` target driver, Supalite ↔ Supabase-local peer
+comparison (Data + Auth + RLS + Storage), local upgrade verification, fault
+lab/replay, reducer, and scenario generation are implemented and proven with
+real evidence. A hosted target (L13) and a documentation/release evidence
+gate (L14) are not implemented — they were out of scope for this sprint.**

@@ -82,10 +82,11 @@ reduction attempt before any step is removed.
 
 ## What is not yet reproducible
 
-- No `supabase-local` or hosted Supabase target exists (L7/L8/L13 — see
-  `docs/LIMITATIONS.md`), so nothing about _their_ timing, container
-  startup, or network behavior is characterized. Real Supalite (L6/L11)
-  process-spawn and HTTP timing now is, incidentally, by virtue of running
-  for real — but this document makes no timing-determinism claim about it;
+- No hosted Supabase target exists (L13 — see `docs/LIMITATIONS.md`), so
+  nothing about its timing or network behavior is characterized. Real
+  Supalite (L6/L11) and real `supabase-local` (L7/L8/L11, a pinned
+  `supabase` CLI over Docker Compose) process-spawn, container-startup and
+  HTTP timing now happen for real — but this document makes no
+  timing-determinism claim about them;
   only the properties above (canonicalization, artifact bytes, generation,
   reduction) are asserted as deterministic.

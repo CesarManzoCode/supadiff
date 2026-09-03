@@ -19,10 +19,14 @@ seventh, `fake`, used only for test infrastructure (§15.2).
   client. `packages/targets/test/integration/*.test.ts`
   (`pnpm test:integration:supalite`, `pnpm test:integration:peer-storage`)
   exercise all four end to end — never scripted.
-- `supabase-local`, `supabase-hosted` — **no driver.** `parseTargetSpec`
-  still rejects both with `unsupported-target-kind`. `supabase-local` is
-  blocked by this environment's Docker access (see `docs/LIMITATIONS.md`);
-  `supabase-hosted` (L13) was out of scope for this sprint.
+- `supabase-local` — real driver in `@supadiff/targets/src/supabase-local/`
+  (L7), a full Supabase stack provisioned by the reproducibly pinned
+  `supabase` CLI **2.116.0** over Docker Compose. `packages/targets/test/
+integration/peer-data-auth-rls.test.ts` and `peer-storage-local.test.ts`
+  exercise it end to end against the Supalite family. See "Supabase-local
+  driver architecture" below.
+- `supabase-hosted` — **no driver.** `parseTargetSpec` still rejects it with
+  `unsupported-target-kind`; L13 was out of scope for this sprint.
 
 ## Supalite driver architecture
 
@@ -80,12 +84,61 @@ proven on bare `sqlite` — never a false pass), and
 `supalite-storage-smoke.json` (L11, Storage peer comparison across two real
 backends).
 
-## What L7/L8 would need to add (not started — see `docs/LIMITATIONS.md`)
+## Supabase-local driver architecture (L7)
 
-- A `supabase-local` `TargetDriver`/`TargetSession` in `@supadiff/targets`,
-  Docker Compose-provisioned, importing only `@supadiff/engine/spi` — same
-  shape as the Supalite drivers above, blocked only by this sandbox's
-  Docker registry access.
-- A `TargetTransitionDriver` for L8's upgrade workflow (§12), with
-  `--local-dir`/dry-run safety mechanics per §12.6.
-- `verify-upgrade` CLI wiring beyond the current "not implemented" stub.
+`packages/targets/src/supabase-local/`. Same SPI shape as the Supalite
+drivers — imports only `@supadiff/engine/spi` — and shares the entire
+Data/Auth/Storage per-operation translation with them
+(`src/shared/rest-dispatch.ts`, one `@supabase/supabase-js@2.97.0` client),
+so the peer comparison measures the target, not the driver.
+
+- **Reproducibility anchor:** the `supabase` npm package is pinned to
+  **2.116.0** (integrity recorded in `src/shared/supabase-cli-cache.ts`) and
+  installed once per process into a shared cache. A CLI release hard-codes
+  its service image tags, so pinning the CLI pins the stack: postgres
+  `17.6.1.165` (and `15.8.1.085` as the L8 upgrade source), gotrue
+  `v2.196.0`, postgrest `v16.1`, storage-api `v1.70.3`, kong `2.8.1`.
+  `TargetIdentity` reports `cliVersion`, `serviceVersions`, and the real
+  `sha256:` `containerDigests` observed after `supabase start`.
+- **Isolation:** each stack gets a fresh workdir, a unique `project_id`
+  (container/network name prefix), and per-project leased ports written into
+  a generated `config.toml`. Services outside the compared surface (studio,
+  realtime, imgproxy, analytics, …) are excluded via `supabase start -x`.
+- **Schema + grants:** the scenario's schema is applied over the direct
+  superuser Postgres URL, followed by a fixed set of
+  `anon`/`authenticated`/`service_role` grants (the same effect as the cloud
+  default `auto_expose_new_tables = true`) and, when Storage is enabled,
+  permissive `authenticated` policies on `storage.buckets`/`storage.objects`
+  — a documented normalization so a Supalite-authored scenario runs
+  identically here (`docs/LIMITATIONS.md`).
+- **Failure modes:** a dead container stack → `harnessFailureReason:
+target-lost` (engine finalizes `inconclusive`); a transient host-port
+  collision on `supabase start` → bounded retry with fresh ports; a
+  requested `package.version` that does not match the observed CLI version
+  → identity mismatch → `inconclusive` with no plan frozen; teardown runs
+  `supabase stop --no-backup` then `forceCleanupProject` (a substring
+  `docker rm`/`network rm` scoped to the project id only, never a broad
+  sweep).
+
+`supabase-local` capabilities (`src/supabase-local/capabilities.ts`): Data,
+Auth, native RLS, and Storage are all `exact` — it runs the actual
+production service images, not an embedded re-implementation.
+`storage.signed-url.redeem` is `exact` here (the server emits the
+capital-`signedURL` key the official client expects) — the exact opposite of
+Supalite 0.9.0; see `docs/DIVERGENCES.md`.
+
+## Local upgrade verification (L8)
+
+`packages/targets/src/supabase-local/upgrade.ts` + `supadiff verify-upgrade`.
+A mandatory dry-run prints the 19-step §12 flow and exits without
+provisioning anything. With `--execute`: a source stack at Postgres `--from`
+(default 15), fixture schema + owner + rows + sequence, a pre-upgrade
+snapshot (row ids, sequence `last_value`, `auth.users`, `pg_policies`), a
+`pg_dump`, then a **fresh destination workdir** with a stack at Postgres
+`--to` (default 17) and a restore. Source and destination run sequentially.
+Verified: the pre-upgrade access token is rejected (no session preservation),
+re-authentication with the same credentials yields a new session, and row
+IDs / sequence values / `auth.users` / RLS policies are preserved
+structurally and functionally. Storage preservation is recorded `skipped`
+(unsupported) before any Storage mutation. Exit codes: 0 (verified/dry-run),
+10 (a preservation check failed), 20 (the flow aborted).

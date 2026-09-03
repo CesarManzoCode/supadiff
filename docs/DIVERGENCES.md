@@ -55,33 +55,37 @@ outcomes:
   rather than silently falling through to a plain new-divergence with no
   trace that a now-expired entry once covered this failure.
 
-## A real finding this sprint did not register as a `KnownDivergence` entry
+## Active entries: the Supalite `signedUrl`/`signedURL` sign-URL bug
 
-L11's Storage testing found and reproduced a real bug: `@supabase/lite@
-0.9.0`'s sign-URL endpoint returns JSON key `signedUrl`, but the real
-Supabase Storage API contract — and the official `@supabase/storage-js`
-client bundled in `supabase-js` — reads `signedURL`. See
-`docs/LIMITATIONS.md` ("The signedUrl/signedURL divergence") for the full
-reproduction, and `storage.signed-url.redeem` in `packages/targets/src/
-supalite/capabilities.ts` for the capability-level record.
+`divergences/active/supalite-signed-url-key-name.json` and
+`...-length.json` — the first genuine `KnownDivergence` entries in this
+repository. L11's Storage testing found that `@supabase/lite@0.9.0`'s
+sign-URL endpoint returns the JSON key `signedUrl` (lowercase), while
+`supabase/storage-api@v1.70.3` returns `signedURL` (capital) — which is what
+the official `@supabase/storage-js@2.97.0` client reads to build
+`createSignedUrl()`'s URL. Confirmed against **both real targets** once L7
+unblocked:
 
-This is **not** entered here as a `KnownDivergence` JSON file, deliberately:
-a `KnownDivergence` entry excuses a specific, already-classified
-**cross-target** `new-divergence` — a real discrepancy between a reference
-and a candidate target's observed behavior on the same comparison. This bug
-is not that. It is the same Supalite server behaving identically broken on
-both sides of the only real peer comparison this sprint could run
-(`supalite-sqlite-postgres` vs. `supalite-pglite` — Supabase-local, the
-literal reference this bug is really a divergence _against_, is blocked by
-this environment's Docker access; see `docs/LIMITATIONS.md`). SupaDiff's
-comparator correctly reports it as `match-exact` (both sides agree), not
-`new-divergence` — there is nothing to excuse in this system's own terms
-until a working Supabase-local peer exists to actually surface the
-discrepancy. Registering a `KnownDivergence` entry with a `supabase-local`
-`referenceSelector` today would assert a match against a target this sprint
-never ran, which is exactly the kind of unverifiable claim this document's
-matching semantics exist to prevent. Once L7 unblocks, this bug is the
-first real candidate for a genuine `KnownDivergence` entry.
+- **reference** `supabase-local`: `createSignedUrl()` → the client redeems
+  the real uploaded bytes, HTTP 200.
+- **candidate** `supalite-sqlite-postgres`: the client's URL is undefined,
+  the scenario redeems `${baseUrl}/storage/v1undefined`, and Supalite serves
+  its admin HTML with HTTP 200 — a successful-looking response carrying the
+  wrong content.
+
+So it is a genuine cross-target `new-divergence` at `scn.supalite-storage-
+smoke` `step.redeem` on `/bytesDigest` and `/contentLength`: identical
+inputs, both HTTP 200, different bytes. Each entry's `expectedFailure`
+predicate asserts exactly that shape (`/candidate/status == 200 &&
+/reference/status == 200 && /candidate/<field> != /reference/<field>`), so it
+never reclassifies a structurally similar but factually different failure.
+`packages/targets/test/integration/peer-storage-local.test.ts` proves the
+comparator reports `new-divergence` without the registry and
+`known-divergence` (with `divergenceId`) with it. The same bug reproduces
+identically on `supalite-pglite`/`supalite-postgres` (see `docs/TARGETS.md`);
+a separate entry would be added if a scenario exercises those as the
+candidate. The Supalite capability record `storage.signed-url.redeem =
+unsupported` is unchanged.
 
 ## Directory convention
 
