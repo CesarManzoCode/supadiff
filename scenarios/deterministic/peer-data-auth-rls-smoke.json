@@ -1,0 +1,140 @@
+{
+  "format": "supadiff.scenario",
+  "formatVersion": "1.0",
+  "id": "scn.peer-data-auth-rls-smoke",
+  "revision": "1",
+  "title": "L7 peer: Data + Auth + owner-scoped RLS + state readback, Supalite vs Supabase-local",
+  "description": "The L7 canonical peer scenario. An owner actor signs up, inserts an owned row, reads it back and re-reads its own session; an anonymous actor must not see the row. Each mutating step also runs an observe.dataReadback so the compared surface includes post-mutation state, not just the immediate response. Deliberately dialect-neutral apart from the RLS policy so it runs identically on a Supalite backend and on a real supabase-local stack.",
+  "tags": ["l7", "acceptance", "peer", "supabase-local", "supalite", "rls"],
+  "seed": "17",
+  "client": { "library": "supabase-js", "version": "2.97.0" },
+  "requirements": [
+    { "capability": "auth.password.signup", "range": "^1.0.0", "accept": ["exact"] },
+    { "capability": "auth.session.read", "range": "^1.0.0", "accept": ["exact"] },
+    { "capability": "data.insert", "range": "^1.0.0", "accept": ["exact"] },
+    { "capability": "data.select", "range": "^1.0.0", "accept": ["exact"] }
+  ],
+  "resources": [
+    {
+      "id": "schema.todos-rls",
+      "mediaType": "application/sql",
+      "sha256": "sha256:e21da3016211b1b92278bf366c244acf1e3839c892a3883fb5a002684f3b87ca",
+      "length": 443,
+      "source": {
+        "kind": "inline",
+        "value": "create table public.todos (\n  id uuid primary key default gen_random_uuid(),\n  owner_id uuid not null,\n  title text not null,\n  created_at timestamptz not null default now()\n);\n\nalter table public.todos enable row level security;\n\ncreate policy \"owner can select own todos\" on public.todos\n  for select using (auth.uid() = owner_id);\n\ncreate policy \"owner can insert own todos\" on public.todos\n  for insert with check (auth.uid() = owner_id);\n"
+      },
+      "sensitivity": "public-fixture"
+    }
+  ],
+  "actors": [
+    {
+      "id": "actor.owner",
+      "kind": "user",
+      "credentialSource": {
+        "kind": "generated",
+        "recipe": { "id": "fixture.password", "version": "1" }
+      },
+      "initialContext": "anonymous",
+      "sessionPolicy": "fresh-per-target"
+    }
+  ],
+  "steps": [
+    {
+      "id": "step.schema",
+      "kind": "schema.apply",
+      "phase": "bootstrap",
+      "input": { "resourceId": "schema.todos-rls", "mode": "authoritative" }
+    },
+    {
+      "id": "step.signup",
+      "kind": "auth.signUp",
+      "phase": "bootstrap",
+      "actor": "actor.owner",
+      "dependsOn": ["step.schema"],
+      "input": {
+        "email": "owner@example.test",
+        "password": { "$secretRef": "fixture.password" }
+      },
+      "capture": [
+        {
+          "name": "owner-id",
+          "from": { "kind": "json-pointer", "pointer": "/user/id" },
+          "valueType": "identifier",
+          "sensitivity": "identifier",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "step.session-read",
+      "kind": "observe.authSession",
+      "phase": "exercise",
+      "actor": "actor.owner",
+      "dependsOn": ["step.signup"],
+      "input": {}
+    },
+    {
+      "id": "step.insert",
+      "kind": "data.insert",
+      "phase": "exercise",
+      "actor": "actor.owner",
+      "dependsOn": ["step.signup"],
+      "input": {
+        "table": "todos",
+        "rows": [{ "owner_id": { "$ref": "capture:owner-id" }, "title": "owner todo" }],
+        "returning": true
+      }
+    },
+    {
+      "id": "step.readback",
+      "kind": "observe.dataReadback",
+      "phase": "exercise",
+      "actor": "actor.owner",
+      "dependsOn": ["step.insert"],
+      "input": {
+        "table": "todos",
+        "filters": [{ "field": "owner_id", "op": "eq", "value": { "$ref": "capture:owner-id" } }]
+      }
+    },
+    {
+      "id": "step.select-owner",
+      "kind": "data.select",
+      "phase": "exercise",
+      "actor": "actor.owner",
+      "dependsOn": ["step.insert"],
+      "input": {
+        "table": "todos",
+        "filters": [{ "field": "owner_id", "op": "eq", "value": { "$ref": "capture:owner-id" } }],
+        "order": [{ "field": "title", "ascending": true }]
+      }
+    },
+    {
+      "id": "step.select-anon",
+      "kind": "data.select",
+      "phase": "exercise",
+      "dependsOn": ["step.insert"],
+      "input": {
+        "table": "todos",
+        "filters": [],
+        "order": [{ "field": "title", "ascending": true }]
+      }
+    }
+  ],
+  "cleanup": [],
+  "comparison": { "policyId": "policy.peer-data-auth-rls-smoke", "policyVersion": "1" },
+  "expectedOutcomes": [],
+  "limits": {
+    "maxSteps": 12,
+    "maxWallTimeMs": 120000,
+    "maxArtifactBytes": 10000000,
+    "maxRequestsPerTarget": 40,
+    "maxHostedCostUsd": 0,
+    "maxParallelOperations": 1
+  },
+  "provenance": {
+    "origin": "authored",
+    "createdAt": "2026-09-03T00:00:00.000Z",
+    "author": "supadiff-l7-sprint"
+  }
+}

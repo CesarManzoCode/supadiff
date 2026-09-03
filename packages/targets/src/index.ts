@@ -22,3 +22,36 @@ export {
 } from "./shared/package-cache.js";
 export { createWorkdir, type Workdir } from "./shared/workdir.js";
 export { leasePort } from "./shared/ports.js";
+
+// L7: real `supabase-local` target (pinned `supabase` CLI + Docker Compose).
+export {
+  createSupabaseLocalDriver,
+  type SupabaseLocalDriverOptions,
+} from "./supabase-local/driver.js";
+export {
+  DEFAULT_ROUTE_PREFIXES as SUPABASE_LOCAL_DEFAULT_ROUTE_PREFIXES,
+  type SupabaseLocalTargetConfig,
+} from "./supabase-local/types.js";
+export { declareSupabaseLocalCapabilities } from "./supabase-local/capabilities.js";
+export {
+  SUPABASE_CLI_PACKAGE,
+  SUPABASE_LOCAL_PINNED_IMAGES,
+  ensureSupabaseCli,
+} from "./shared/supabase-cli-cache.js";
+export {
+  scaffoldSupabaseLocalProject,
+  startStack,
+  stopStack,
+  forceCleanupProject,
+  type SupabaseLocalProvisionedProject,
+} from "./supabase-local/provision.js";
+export { SupabaseLocalTargetSession } from "./supabase-local/session.js";
+
+// L8: local Supabase upgrade verification (§12).
+export {
+  verifyUpgrade,
+  type VerifyUpgradeOptions,
+  type VerifyUpgradeReport,
+  type UpgradeCheck,
+  type UpgradeCheckStatus,
+} from "./supabase-local/upgrade.js";
