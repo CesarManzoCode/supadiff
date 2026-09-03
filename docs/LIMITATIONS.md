@@ -51,13 +51,6 @@ out at its point of implementation with a contract section reference:
    requires (an exact-only check can never silently pass a real drift), not
    a gap in the fail-closed guarantee itself.
 
-6. **`ExecutionPlan.orderedSteps` records operation id/version, not the
-   fully resolved per-step input.** The plan proves ordering and freezes
-   target identity/capability resolution before execution begins, but does
-   not yet re-materialize each step's resolved `input` (refs/captures are
-   still resolved lazily during execution, as before). Replay/reduction
-   (L9/L10, out of scope for this delivery) would need that extension.
-
 ### Previously tracked simplifications closed in this hardening pass
 
 The following gaps were tracked here in an earlier revision of this
@@ -94,6 +87,19 @@ changed and why is auditable):
 - `ExecutionPlan` (§2.3) is now a real, separately built, frozen value
   object (`buildExecutionPlan`, `@supadiff/engine`) rather than only a
   named FSM state — see `docs/ARCHITECTURE.md`.
+- The plan is now the actual scheduling authority, not just a recorded
+  artifact alongside a re-planning executor. `ResolvedStep` (§2.3) carries
+  everything execution needs per step — actor, `dependsOn`, `capture`,
+  `observe`, `timeoutMs`/`retry`, `onUnsupported`, and a per-target
+  `targetRequirements[].unsupported` decision resolved once during planning
+  from that target's declared/probed capabilities. `runScenario`'s
+  execution loop now iterates `plan.orderedSteps` and reads that frozen
+  decision; it no longer iterates `scenario.steps` or calls
+  `resolveCapability` again to decide whether a step runs.
+  `ResolvedStep.input` still keeps `$ref`/capture placeholders exactly as
+  authored — captured values are, by design (§2.6), resolved at runtime as
+  earlier steps produce them, never during planning; that laziness was
+  mischaracterized here before as an unresolved gap.
 
 ## What is proven, precisely
 

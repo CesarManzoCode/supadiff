@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildExecutionPlan,
   IncompletePlanInputError,
@@ -8,6 +8,7 @@ import {
   scanPlanForSecretsOrEndpoints,
   type FakeScript,
 } from "../../src/index.js";
+import * as capabilitiesModule from "../../src/execution/capabilities.js";
 import {
   exactCapability,
   fakeIdentity,
@@ -359,5 +360,155 @@ describe("ExecutionPlan: the executor consumes the frozen plan, never re-decides
       now: () => "2026-09-03T00:00:00.000Z",
     });
     expect(Object.isFrozen(plan)).toBe(true);
+  });
+});
+
+describe("ExecutionPlan: the frozen plan is the scheduling authority, not ScenarioSpec.steps", () => {
+  it("ResolvedStep carries everything execution needs, and the plan's step order drives the actual run", async () => {
+    const driver = new FakeTargetDriver({ ref: baseScript() });
+    const scenario = twoStepScenario();
+    const result = await runScenario(
+      scenario,
+      [{ slot: "reference", spec: fakeTargetSpec("reference", "ref"), driver }],
+      { clock: fixedClock() },
+    );
+    expect(result.state).toBe("complete");
+    const plan = result.plan!;
+    expect(plan.orderedSteps.map((s) => s.stepId)).toEqual(["step.signup", "step.select"]);
+
+    const selectStep = plan.orderedSteps[1]!;
+    expect(selectStep.operationId).toBe("data.select");
+    expect(selectStep.actor).toBe("actor.owner");
+    expect(selectStep.phase).toBe("exercise");
+    expect(selectStep.dependsOn).toEqual(["step.signup"]);
+    expect(selectStep.capture).toEqual([]);
+    expect(selectStep.observe).toEqual([]);
+    expect(selectStep.onUnsupported).toBe("skip-scenario");
+    expect(selectStep.targetRequirements).toEqual([
+      { targetSlot: "reference", unsupported: false },
+    ]);
+
+    // The execution order actually observed on the target is exactly plan.orderedSteps' order —
+    // proving the executor scheduled from the plan, not by iterating scenario.steps again.
+    const target = result.targets.get("reference")!;
+    const startedOrder = target.events
+      .filter((e) => e.kind === "step-started")
+      .map((e) => (e as { stepId: string }).stepId);
+    expect(startedOrder).toEqual(plan.orderedSteps.map((s) => s.stepId));
+  });
+
+  it("a step's $ref/capture placeholder is frozen into the plan untouched — planning never resolves capture values", () => {
+    const scenario = twoStepScenario();
+    const plan = buildExecutionPlan({
+      scenario,
+      policy: {
+        format: "supadiff.comparison-policy",
+        formatVersion: "1.0",
+        policyId: "p",
+        policyVersion: "1",
+        rules: [],
+      },
+      mode: "peer",
+      targets: [
+        {
+          slot: "reference",
+          spec: fakeTargetSpec("reference", "ref") as never,
+          role: "reference",
+          identity: fakeIdentity(),
+          capabilityResolution: [],
+          declaredCapabilities: [],
+          probedCapabilities: [],
+        },
+      ],
+      maxParallelOperations: 1,
+      now: () => "2026-09-03T00:00:00.000Z",
+    });
+    const selectStep = plan.orderedSteps.find((s) => s.stepId === "step.select")!;
+    // Same shape as the authored StepSpec.input: the $ref marker is untouched, not a resolved value.
+    expect(selectStep.input).toEqual({
+      table: "todos",
+      filters: [{ field: "owner_id", op: "eq", value: { $ref: "capture:owner-id" } }],
+    });
+  });
+
+  it("that same $ref still resolves correctly at runtime, from the value an earlier step produced", async () => {
+    // step.signup's capture reads a top-level `id` field (fake-scenario.ts's capture spec is
+    // `{ kind: "semantic", field: "id" }`), so the script's response body puts it there.
+    const driver = new FakeTargetDriver({
+      ref: baseScript({
+        steps: {
+          "step.signup": { category: "success", status: 200, body: { id: "owner-abc-123" } },
+          "step.select": {
+            category: "success",
+            status: 200,
+            body: { status: "success", rows: [{ id: 1, owner_id: "owner-abc-123" }] },
+          },
+        },
+      }),
+    });
+    const scenario = twoStepScenario();
+    const result = await runScenario(
+      scenario,
+      [{ slot: "reference", spec: fakeTargetSpec("reference", "ref"), driver }],
+      { clock: fixedClock() },
+    );
+    expect(result.state).toBe("complete");
+
+    // step.signup captured "owner-id" from the signup response body's `id` field.
+    const captured = result.capturedValueStore.get("reference", "owner-id");
+    expect(captured?.persistedValue).toBe("owner-abc-123");
+
+    // step.select's raw observation shows the $ref was substituted with that same captured
+    // value before the request was sent — not left as an unresolved placeholder.
+    const target = result.targets.get("reference")!;
+    const selectObservation = target.rawObservations.get("step.select:1")!;
+    expect(selectObservation.transport.requestBody).toEqual({
+      table: "todos",
+      filters: [{ field: "owner_id", op: "eq", value: "owner-abc-123" }],
+    });
+  });
+});
+
+describe("ExecutionPlan: capability requirements are resolved once during planning, never recomputed by the executor", () => {
+  it("a step's own `requires` object is passed to resolveCapability exactly 3 times (preflight, probe, planning) — never a 4th time from the step loop", async () => {
+    // Reference equality on this exact object is what makes the count trustworthy: it isolates
+    // calls that resolve THIS step's requirement from the unrelated calls resolving
+    // scenario-level requirements, so the count cannot be inflated or hidden by the pre-existing
+    // preflight/probe machinery — it only grows if something calls resolveCapability with this
+    // very requirement object again.
+    const stepRequirement = {
+      capability: "data.select",
+      range: "^1.0.0",
+      accept: ["exact"] as const,
+    };
+    const base = twoStepScenario();
+    const steps = base.steps.map((s) =>
+      s.id === "step.select" ? { ...s, requires: [stepRequirement] } : s,
+    );
+    const scenario = { ...base, steps };
+
+    const spy = vi.spyOn(capabilitiesModule, "resolveCapability");
+    try {
+      const driver = new FakeTargetDriver({ ref: baseScript() });
+      const result = await runScenario(
+        scenario,
+        [{ slot: "reference", spec: fakeTargetSpec("reference", "ref"), driver }],
+        { clock: fixedClock() },
+      );
+      expect(result.state).toBe("complete");
+
+      const callsForThisRequirement = spy.mock.calls.filter(([req]) => req === stepRequirement);
+      // declared-capabilities preflight (1) + runtime-capabilities probe (1) + planning, inside
+      // buildExecutionPlan (1) = 3. Before this fix, the step-execution loop resolved the same
+      // requirement a 4th time at run time; that call no longer exists.
+      expect(callsForThisRequirement).toHaveLength(3);
+
+      const selectStep = result.plan!.orderedSteps.find((s) => s.stepId === "step.select")!;
+      expect(selectStep.targetRequirements).toEqual([
+        { targetSlot: "reference", unsupported: false },
+      ]);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

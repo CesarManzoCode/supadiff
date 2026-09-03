@@ -7,9 +7,9 @@ import {
   type ExecutionPlan,
   type IsoDateTime,
   type JsonObject,
+  type ResolvedStep,
   type ScenarioSpec,
   type StableId,
-  type StepSpec,
   type TargetCapability,
   type TargetIdentity,
   type TargetLifecycleRecord,
@@ -289,6 +289,8 @@ export async function runScenario(
           role: i === 0 ? "reference" : "candidate",
           identity: ctx.identity,
           capabilityResolution: ctx.capabilityResolution,
+          declaredCapabilities: ctx.declaredCapabilities,
+          probedCapabilities: ctx.probedCapabilities,
         })),
         maxParallelOperations: scenario.limits.maxParallelOperations,
         now: clock,
@@ -325,28 +327,30 @@ export async function runScenario(
       ctx.fsm.transition("executing", "execution started");
     }
 
-    // --- executing: lockstep by logical step ---
+    // --- executing: lockstep by logical step, driven by the frozen plan (§5.1) ---
+    // From here on the frozen plan is the scheduling authority: step order, dependencies,
+    // and each step's per-target capability disposition all come from `plan.orderedSteps`,
+    // not from `scenario.steps` or a fresh `resolveCapability` call.
     const blockedSteps = new Set<StableId>();
-    for (const step of scenario.steps) {
-      const dependenciesBlocked = (step.dependsOn ?? []).some((d) => blockedSteps.has(d));
+    for (const step of plan.orderedSteps) {
+      const dependenciesBlocked = step.dependsOn.some((d) => blockedSteps.has(d));
       for (const ctx of perTarget.values()) {
         if (ctx.lost) {
-          ctx.attempts.push({ stepId: step.id, attempt: 1, status: "target-lost" });
+          ctx.attempts.push({ stepId: step.stepId, attempt: 1, status: "target-lost" });
           continue;
         }
         if (dependenciesBlocked) {
-          ctx.attempts.push({ stepId: step.id, attempt: 1, status: "blocked-dependency" });
-          blockedSteps.add(step.id);
+          ctx.attempts.push({ stepId: step.stepId, attempt: 1, status: "blocked-dependency" });
+          blockedSteps.add(step.stepId);
           continue;
         }
 
-        const stepReqResolution = (step.requires ?? []).map((req) =>
-          resolveCapability(req, ctx.declaredCapabilities, ctx.probedCapabilities),
+        const targetRequirement = step.targetRequirements.find(
+          (r) => r.targetSlot === ctx.handle.slot,
         );
-        if (stepReqResolution.some((r) => r.status === "unsupported")) {
-          const onUnsupported = step.onUnsupported ?? "skip-scenario";
-          ctx.attempts.push({ stepId: step.id, attempt: 1, status: "skipped-requirement" });
-          if (onUnsupported === "skip-scenario") blockedSteps.add(step.id);
+        if (targetRequirement?.unsupported) {
+          ctx.attempts.push({ stepId: step.stepId, attempt: 1, status: "skipped-requirement" });
+          if (step.onUnsupported === "skip-scenario") blockedSteps.add(step.stepId);
           continue;
         }
 
@@ -396,7 +400,7 @@ export async function runScenario(
   }
 
   async function attemptOnce(
-    step: StepSpec,
+    step: ResolvedStep,
     ctx: NonNullable<ReturnType<typeof perTarget.get>>,
     store: CapturedValueStore,
     attempt: number,
@@ -410,18 +414,18 @@ export async function runScenario(
         namedSecrets: ctx.namedSecrets,
       }) as JsonObject;
 
-      if (!isKnownOperation(step.kind, "1")) {
+      if (!isKnownOperation(step.operationId, step.operationVersion)) {
         throw new Error(
-          `unknown operation "${step.kind}" reached execution (should have been validated)`,
+          `unknown operation "${step.operationId}" reached execution (should have been validated)`,
         );
       }
-      validateOperationInput(step.kind, "1", resolvedInput);
+      validateOperationInput(step.operationId, step.operationVersion, resolvedInput);
 
       const actorBinding = step.actor ? ctx.actorBindings.get(step.actor) : undefined;
       const request = {
-        stepId: step.id,
+        stepId: step.stepId,
         attempt,
-        operation: { id: step.kind, version: "1" },
+        operation: { id: step.operationId, version: step.operationVersion },
         actor: actorBinding,
         input: resolvedInput,
       };
@@ -437,7 +441,7 @@ export async function runScenario(
           ? new Promise<never>((_resolve, reject) => {
               timer = setTimeout(() => {
                 controller.abort();
-                reject(new OperationTimeoutError(`step "${step.id}" timed out`));
+                reject(new OperationTimeoutError(`step "${step.stepId}" timed out`));
               }, timeoutMs);
             })
           : undefined;
@@ -461,15 +465,15 @@ export async function runScenario(
       } else {
         status = "executed";
         applyCaptures(step, ctx, store, result);
-        if (hasProjector(step.kind, "1")) {
+        if (hasProjector(step.operationId, step.operationVersion)) {
           const { observation, redactionFailed } = buildRawObservation({
-            observationId: `${step.id}.${attempt}`,
+            observationId: `${step.stepId}.${attempt}`,
             origin: "primary",
             runId,
             targetSlot: ctx.handle.slot,
-            stepId: step.id,
+            stepId: step.stepId,
             attempt,
-            operation: { id: step.kind, version: "1" },
+            operation: { id: step.operationId, version: step.operationVersion },
             actor: actorBinding,
             startedAt: clock(),
             requestBody: resolvedInput,
@@ -477,7 +481,7 @@ export async function runScenario(
             vault: ctx.vault,
             configuredLiterals: opts.configuredSecretLiterals ?? [],
           });
-          const key = `${step.id}:${attempt}`;
+          const key = `${step.stepId}:${attempt}`;
           ctx.rawObservations.set(key, observation);
           ctx.semanticObservations.set(key, project(observation));
           if (redactionFailed) ctx.redactionFailures.push(key);
@@ -494,7 +498,7 @@ export async function runScenario(
   }
 
   async function executeStepOnTarget(
-    step: StepSpec,
+    step: ResolvedStep,
     ctx: NonNullable<ReturnType<typeof perTarget.get>>,
     store: CapturedValueStore,
     signal: AbortSignal | undefined,
@@ -509,17 +513,17 @@ export async function runScenario(
       ctx.events.push({
         kind: "step-started",
         targetSlot: ctx.handle.slot,
-        stepId: step.id,
+        stepId: step.stepId,
         attempt,
       });
       const outcome = await attemptOnce(step, ctx, store, attempt);
       status = outcome.status;
       result = outcome.result;
-      ctx.attempts.push({ stepId: step.id, attempt, status, result });
+      ctx.attempts.push({ stepId: step.stepId, attempt, status, result });
       ctx.events.push({
         kind: "step-finished",
         targetSlot: ctx.handle.slot,
-        stepId: step.id,
+        stepId: step.stepId,
         attempt,
         status,
       });
@@ -535,12 +539,12 @@ export async function runScenario(
     }
 
     if (status === "timed-out" || status === "harness-error" || status === "target-lost") {
-      blocked.add(step.id);
+      blocked.add(step.stepId);
     }
 
     if (status !== "executed") return;
 
-    for (const observer of step.observe ?? []) {
+    for (const observer of step.observe) {
       const obsResolved = resolveRefs(observer.input, {
         targetSlot: ctx.handle.slot,
         captures: store,
@@ -549,7 +553,7 @@ export async function runScenario(
       validateOperationInput(observer.operation.id, observer.operation.version, obsResolved);
       const obsResult = await ctx.session!.observe(
         {
-          stepId: step.id,
+          stepId: step.stepId,
           attempt: 1,
           operation: observer.operation,
           actor: step.actor ? ctx.actorBindings.get(step.actor) : undefined,
@@ -557,23 +561,23 @@ export async function runScenario(
         },
         signal ?? new AbortController().signal,
       );
-      ctx.observerResults.set(`${step.id}:${observer.id}`, obsResult);
+      ctx.observerResults.set(`${step.stepId}:${observer.id}`, obsResult);
       ctx.events.push({
         kind: "observer-finished",
         targetSlot: ctx.handle.slot,
-        stepId: step.id,
+        stepId: step.stepId,
         observationId: observer.id,
       });
     }
   }
 
   function applyCaptures(
-    step: StepSpec,
+    step: ResolvedStep,
     ctx: NonNullable<ReturnType<typeof perTarget.get>>,
     store: CapturedValueStore,
     result: RawOperationResult,
   ): void {
-    for (const capture of step.capture ?? []) {
+    for (const capture of step.capture) {
       let value: unknown;
       const body = result.responseBody as Record<string, unknown> | undefined;
       if (capture.from.kind === "semantic" && body && typeof body === "object") {
@@ -585,7 +589,7 @@ export async function runScenario(
       }
       const record: CapturedValueRecord = {
         handle: capture.name,
-        producerStepId: step.id,
+        producerStepId: step.stepId,
         targetSlot: ctx.handle.slot,
         valueType: capture.valueType,
         sensitivity: capture.sensitivity,

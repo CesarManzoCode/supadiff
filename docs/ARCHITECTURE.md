@@ -56,9 +56,14 @@ parseScenarioSpec (spec)
   → runScenario (engine): declared-capability preflight
       → provision (write recovery intent first) → identify → probe capabilities
       → buildExecutionPlan (engine/planning): freeze ExecutionPlan — target
-        identity mismatch here yields `inconclusive`, never a silent plan
-      → actors opened → lockstep step execution (raw observation + redaction
-        + semantic projection per step) → cleanup (reverse order) → teardown
+        identity mismatch here yields `inconclusive`, never a silent plan;
+        each step's own capability requirements are also resolved once here
+        into `ResolvedStep.targetRequirements`
+      → actors opened → lockstep execution of `plan.orderedSteps` (not
+        `scenario.steps` — the frozen plan is the scheduling authority; raw
+        observation + redaction + semantic projection per step; captured
+        values/`$ref`s are still resolved at runtime, never during
+        planning) → cleanup (reverse order) → teardown
   → compareStep (engine, per step/path): rule selection (target selector +
       capability context, resolved from the frozen plan's capability
       resolution) → rule evaluation → known-divergence match (selector +

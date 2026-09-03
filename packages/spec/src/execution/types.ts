@@ -1,6 +1,14 @@
-import type { IsoDateTime, Sha256, StableId } from "../ids.js";
+import type { DurationMs, IsoDateTime, Sha256, StableId } from "../ids.js";
 import type { CapabilityResolutionStatus, CapabilityLevel } from "../capability/types.js";
 import type { TargetIdentity, TargetKind } from "../target/types.js";
+import type {
+  CaptureSpec,
+  ObservationRequest,
+  OnUnsupported,
+  RetrySpec,
+  StepPhase,
+} from "../scenario/types.js";
+import type { JsonObject } from "../json-value.js";
 
 /**
  * One target's resolved slot in a frozen `ExecutionPlan` (§2.3). Carries the *observed*
@@ -14,11 +22,38 @@ export interface ResolvedTargetSlot {
   identity: TargetIdentity;
 }
 
-/** One scenario step as it will actually execute, in fixed lockstep order (§5.2). */
+/**
+ * One target's frozen capability-aware disposition for one step (§2.8, §3.5). Computed once
+ * during planning from that target's declared/probed capabilities, so the executor never
+ * calls `resolveCapability` again to decide whether a step runs.
+ */
+export interface ResolvedStepTargetRequirement {
+  targetSlot: StableId;
+  /** true when this step's own `requires` resolved to `unsupported` on this target. */
+  unsupported: boolean;
+}
+
+/**
+ * One scenario step as it will actually execute, in fixed lockstep order (§5.2). Carries
+ * everything the executor needs to run the step from the plan alone — it MUST NOT go back
+ * to `ScenarioSpec.steps` for scheduling or execution parameters. `input` keeps its `$ref`
+ * placeholders intact: capture values are resolved at runtime as earlier steps produce them,
+ * never during planning (§2.6).
+ */
 export interface ResolvedStep {
   stepId: StableId;
   operationId: StableId;
   operationVersion: string;
+  phase: StepPhase;
+  actor?: StableId;
+  dependsOn: StableId[];
+  input: JsonObject;
+  capture: CaptureSpec[];
+  observe: ObservationRequest[];
+  timeoutMs?: DurationMs;
+  retry?: RetrySpec;
+  onUnsupported: OnUnsupported;
+  targetRequirements: ResolvedStepTargetRequirement[];
 }
 
 /** One requirement's frozen resolution, carried into the plan so the executor never re-decides it. */

@@ -9,10 +9,11 @@ import {
   type ResolvedTargetSlot,
   type ScenarioSpec,
   type StableId,
+  type TargetCapability,
   type TargetIdentity,
   type TargetSpec,
 } from "@supadiff/spec";
-import type { CapabilityResolution } from "../execution/capabilities.js";
+import { resolveCapability, type CapabilityResolution } from "../execution/capabilities.js";
 
 /**
  * Raised when a target's *observed* identity (collected during provisioning, §2.7) does
@@ -48,6 +49,15 @@ export interface PlanTargetInput {
   identity: TargetIdentity | undefined;
   /** Per-requirement resolution computed from BOTH declared and probed capabilities (§2.8). */
   capabilityResolution: CapabilityResolution[];
+  /**
+   * This target's declared/probed capabilities, used ONLY here — once, during planning — to
+   * resolve each step's own `requires` (§3.5) into a frozen `ResolvedStepTargetRequirement`.
+   * The executor consumes that frozen decision and MUST NOT call `resolveCapability` again.
+   * Optional only so callers that pass scenarios with no step-level `requires` (nothing to
+   * resolve) need not supply them; `runScenario` always provides the real values.
+   */
+  declaredCapabilities?: TargetCapability[];
+  probedCapabilities?: TargetCapability[];
 }
 
 export interface BuildExecutionPlanInput {
@@ -107,10 +117,29 @@ export function buildExecutionPlan(input: BuildExecutionPlanInput): ExecutionPla
     }))
     .sort((a, b) => a.slot.localeCompare(b.slot));
 
+  // Step requirements are resolved exactly once here, during planning, from each target's
+  // frozen declared/probed capabilities (§2.8, §3.5) — never re-decided by the executor.
   const orderedSteps: ResolvedStep[] = input.scenario.steps.map((s) => ({
     stepId: s.id,
     operationId: s.kind,
     operationVersion: "1",
+    phase: s.phase,
+    actor: s.actor,
+    dependsOn: s.dependsOn ?? [],
+    input: s.input,
+    capture: s.capture ?? [],
+    observe: s.observe ?? [],
+    timeoutMs: s.timeoutMs,
+    retry: s.retry,
+    onUnsupported: s.onUnsupported ?? "skip-scenario",
+    targetRequirements: input.targets.map((t) => ({
+      targetSlot: t.slot,
+      unsupported: (s.requires ?? []).some(
+        (req) =>
+          resolveCapability(req, t.declaredCapabilities ?? [], t.probedCapabilities).status ===
+          "unsupported",
+      ),
+    })),
   }));
 
   const capabilityResolution: PlanCapabilityResolution[] = input.targets
@@ -160,16 +189,24 @@ export function buildExecutionPlan(input: BuildExecutionPlanInput): ExecutionPla
   return Object.freeze(plan);
 }
 
-/** Scans a plan's canonical serialization for anything that looks like a secret or a live endpoint. */
+/**
+ * Scans a plan's canonical serialization for anything that looks like a secret or a live
+ * endpoint. `orderedSteps[].input` now carries the scenario's own step input verbatim
+ * (§2.6) — including credential-shaped keys such as `password` — but only ever as a
+ * `$secretRef`/`$ref` marker, never a resolved value (the spec invariant "no actor
+ * credential literal appears in the spec" already guarantees that). So a credential-shaped
+ * key is only a real finding when it is paired with a literal string value, not a marker
+ * object.
+ */
 export function scanPlanForSecretsOrEndpoints(plan: ExecutionPlan): string[] {
   const findings: string[] = [];
   const text = JSON.stringify(plan);
-  if (/\$secret/i.test(text)) findings.push("plan JSON contains a $secret marker");
+  if (/"\$secret":/i.test(text)) findings.push("plan JSON contains a $secret marker");
   if (/sec-[A-Za-z0-9_-]+/.test(text))
     findings.push("plan JSON contains what looks like a secret handle value");
   if (/https?:\/\//i.test(text)) findings.push("plan JSON contains a live http(s) endpoint URL");
-  if (/password|refresh_token|access_token/i.test(text)) {
-    findings.push("plan JSON contains a credential-shaped field name");
+  if (/"(?:password|refresh_token|access_token)":"/i.test(text)) {
+    findings.push("plan JSON contains a credential-shaped field holding a literal value");
   }
   return findings;
 }
