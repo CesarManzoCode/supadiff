@@ -116,13 +116,98 @@ registerSchema(SUPALITE_SQLITE_POSTGRES_CONFIG_SCHEMA);
 registerSchema(SUPALITE_PGLITE_CONFIG_SCHEMA);
 registerSchema(SUPALITE_POSTGRES_CONFIG_SCHEMA);
 
-/** Per-`TargetKind` closed config schema `$id`s. Hosted/local Supabase kinds remain L7+ (not yet registered). */
+/**
+ * Closed config schema for the `supabase-local` target kind (§2.7, §4.4; L7). A real
+ * Supabase local stack provisioned by a pinned `supabase` CLI over Docker Compose
+ * (Postgres + GoTrue + PostgREST + Storage API + Kong). Every field is REQUIRED for the
+ * same reason the Supalite schema requires all of its own: no implicit engine default may
+ * silently decide an RLS/privilege/version-relevant fact, and the compiler always writes
+ * the resolved value into the plan.
+ */
+export const SUPABASE_LOCAL_CONFIG_SCHEMA = {
+  $id: "supadiff://schema/target-config/supabase-local.json",
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    dbMajorVersion: {
+      type: "integer",
+      minimum: 13,
+      maximum: 17,
+      description:
+        "PostgreSQL major version the local stack runs (`[db].major_version` in the generated " +
+        "config.toml). Explicit because it is the axis L8's upgrade verification moves along.",
+    },
+    excludedServices: {
+      type: "array",
+      items: {
+        enum: [
+          "realtime",
+          "imgproxy",
+          "mailpit",
+          "postgres-meta",
+          "studio",
+          "edge-runtime",
+          "logflare",
+          "vector",
+          "supavisor",
+        ],
+      },
+      description:
+        "Compose services the driver passes to `supabase start -x`. `db`, `kong`, `gotrue`, " +
+        "`postgrest`, and (when storage is enabled) `storage-api` are never excludable — they are " +
+        "the observable surface this build compares.",
+    },
+    experimentalFeatures: {
+      type: "array",
+      items: { enum: ["storage"] },
+      description: "Feature surfaces to enable; `storage` starts the Storage API container.",
+    },
+    keyMode: {
+      const: "opaque-v1",
+      description:
+        "Opaque sb_publishable_*/sb_secret_* API keys (the CLI's current default). Legacy " +
+        "JWT-as-apikey is not modeled as a config option, matching the Supalite schema.",
+    },
+    routePrefixes: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        auth: { type: "string", minLength: 1 },
+        rest: { type: "string", minLength: 1 },
+        storage: { type: "string", minLength: 1 },
+      },
+      required: ["auth", "rest", "storage"],
+    },
+    analytics: {
+      type: "boolean",
+      description:
+        "Whether the Logflare/Vector analytics pipeline is enabled. `false` for a lean, " +
+        "reproducible comparison stack; the CLI otherwise requires it and it drags in two more " +
+        "containers plus a fixed 4000/tcp port.",
+    },
+    readinessTimeoutMs: { type: "integer", minimum: 1000 },
+  },
+  required: [
+    "dbMajorVersion",
+    "excludedServices",
+    "experimentalFeatures",
+    "keyMode",
+    "routePrefixes",
+    "analytics",
+    "readinessTimeoutMs",
+  ],
+} as const;
+registerSchema(SUPABASE_LOCAL_CONFIG_SCHEMA);
+
+/** Per-`TargetKind` closed config schema `$id`s. `supabase-hosted` remains L13 (not registered). */
 export const TARGET_CONFIG_SCHEMA_BY_KIND: Record<string, string> = {
   fake: FAKE_TARGET_CONFIG_SCHEMA.$id,
   "supalite-sqlite": SUPALITE_SQLITE_CONFIG_SCHEMA.$id,
   "supalite-sqlite-postgres": SUPALITE_SQLITE_POSTGRES_CONFIG_SCHEMA.$id,
   "supalite-pglite": SUPALITE_PGLITE_CONFIG_SCHEMA.$id,
   "supalite-postgres": SUPALITE_POSTGRES_CONFIG_SCHEMA.$id,
+  "supabase-local": SUPABASE_LOCAL_CONFIG_SCHEMA.$id,
 };
 
 export const TARGET_SPEC_SCHEMA = {
