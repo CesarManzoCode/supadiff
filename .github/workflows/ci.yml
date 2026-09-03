@@ -73,6 +73,10 @@ jobs:
       - name: Install dependencies (frozen lockfile)
         run: pnpm install --frozen-lockfile
 
+      # Workspace packages export from ./dist/...; build before running suites.
+      - name: Build workspace packages
+        run: pnpm build
+
       # Real @supabase/lite@0.9.0 processes and real supabase-js traffic — no
       # hosted credentials, no Docker, no Cartesian target matrix.
       - name: L6 — Supalite target family (all 4 backends)
@@ -110,6 +114,10 @@ jobs:
 
       - name: Install dependencies (frozen lockfile)
         run: pnpm install --frozen-lockfile
+
+      # Workspace packages export from ./dist/...; build before running suites.
+      - name: Build workspace packages
+        run: pnpm build
 
       # ubuntu-latest runners ship Docker. These bring up a real Supabase stack
       # via the pinned `supabase` CLI 2.116.0 (Postgres + GoTrue + PostgREST +
