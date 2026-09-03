@@ -1,0 +1,107 @@
+{
+  "format": "supadiff.comparison-policy",
+  "formatVersion": "1.0",
+  "policyId": "policy.basic",
+  "policyVersion": "1",
+  "rules": [
+    {
+      "id": "rule.signup-status",
+      "version": "1",
+      "selector": {
+        "service": "auth",
+        "operationId": "auth.signUp",
+        "operationVersion": "1",
+        "observablePath": "/status",
+        "referenceTargetSelector": { "kind": "fake" },
+        "candidateTargetSelector": { "kind": "fake" }
+      },
+      "inputType": "string",
+      "rule": { "kind": "exact" },
+      "strictness": "contract",
+      "rationale": "signup status must match exactly",
+      "evidence": [{ "kind": "note", "value": "contract §6.3" }]
+    },
+    {
+      "id": "rule.signup-user-id",
+      "version": "1",
+      "selector": {
+        "service": "auth",
+        "operationId": "auth.signUp",
+        "operationVersion": "1",
+        "observablePath": "/user/id",
+        "referenceTargetSelector": { "kind": "fake" },
+        "candidateTargetSelector": { "kind": "fake" }
+      },
+      "inputType": "string",
+      "rule": {
+        "kind": "relationship",
+        "predicate": "session.belongs-to-actor"
+      },
+      "strictness": "contract",
+      "rationale": "subject identity is compared by relationship, never by raw id equality across targets",
+      "evidence": [{ "kind": "note", "value": "contract §6.5" }]
+    },
+    {
+      "id": "rule.signup-user-email",
+      "version": "1",
+      "selector": {
+        "service": "auth",
+        "operationId": "auth.signUp",
+        "operationVersion": "1",
+        "observablePath": "/user/email",
+        "referenceTargetSelector": { "kind": "fake" },
+        "candidateTargetSelector": { "kind": "fake" }
+      },
+      "inputType": "string",
+      "rule": { "kind": "exact" },
+      "strictness": "contract",
+      "rationale": "fixture email is deterministic and must match exactly",
+      "evidence": [{ "kind": "note", "value": "contract §6.3" }]
+    },
+    {
+      "id": "rule.select-status",
+      "version": "1",
+      "selector": {
+        "service": "data",
+        "operationId": "data.select",
+        "operationVersion": "1",
+        "observablePath": "/status",
+        "referenceTargetSelector": { "kind": "fake" },
+        "candidateTargetSelector": { "kind": "fake" }
+      },
+      "inputType": "string",
+      "rule": { "kind": "exact" },
+      "strictness": "contract",
+      "rationale": "select status must match exactly",
+      "evidence": [{ "kind": "note", "value": "contract §6.3" }]
+    },
+    {
+      "id": "rule.select-rows",
+      "version": "1",
+      "selector": {
+        "service": "data",
+        "operationId": "data.select",
+        "operationVersion": "1",
+        "observablePath": "/rows",
+        "referenceTargetSelector": { "kind": "fake" },
+        "candidateTargetSelector": { "kind": "fake" }
+      },
+      "inputType": "array",
+      "rule": {
+        "kind": "unordered-collection",
+        "key": "/id",
+        "item": {
+          "kind": "object",
+          "unknown": "fail",
+          "fields": [
+            { "field": "/id", "rule": { "kind": "exact" } },
+            { "field": "/owner_id", "rule": { "kind": "exact" } }
+          ]
+        }
+      },
+      "strictness": "contract",
+      "rationale": "rows are keyed by id and compared without regard to order",
+      "evidence": [{ "kind": "note", "value": "contract §7.3" }]
+    }
+  ]
+}

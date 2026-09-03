@@ -1,0 +1,72 @@
+{
+  "format": "supadiff.scenario",
+  "formatVersion": "1.0",
+  "id": "scn.basic",
+  "revision": "1",
+  "title": "Basic signup and readback",
+  "tags": ["l5", "acceptance"],
+  "seed": "1",
+  "client": { "library": "supabase-js", "version": "2.97.0" },
+  "requirements": [
+    { "capability": "auth.password.signup", "range": "^1.0.0", "accept": ["exact"] },
+    { "capability": "data.select", "range": "^1.0.0", "accept": ["exact"] }
+  ],
+  "resources": [],
+  "actors": [
+    {
+      "id": "actor.owner",
+      "kind": "user",
+      "credentialSource": {
+        "kind": "generated",
+        "recipe": { "id": "fixture.password", "version": "1" }
+      },
+      "initialContext": "anonymous",
+      "sessionPolicy": "fresh-per-target"
+    }
+  ],
+  "steps": [
+    {
+      "id": "step.signup",
+      "kind": "auth.signUp",
+      "phase": "bootstrap",
+      "actor": "actor.owner",
+      "input": { "email": "owner@example.test", "password": { "$secretRef": "fixture.password" } },
+      "capture": [
+        {
+          "name": "owner-id",
+          "from": { "kind": "semantic", "field": "id" },
+          "valueType": "identifier",
+          "sensitivity": "identifier",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "step.select",
+      "kind": "data.select",
+      "phase": "exercise",
+      "actor": "actor.owner",
+      "dependsOn": ["step.signup"],
+      "input": {
+        "table": "todos",
+        "filters": [{ "field": "owner_id", "op": "eq", "value": { "$ref": "capture:owner-id" } }]
+      }
+    }
+  ],
+  "cleanup": [],
+  "comparison": { "policyId": "policy.basic", "policyVersion": "1" },
+  "expectedOutcomes": [],
+  "limits": {
+    "maxSteps": 10,
+    "maxWallTimeMs": 30000,
+    "maxArtifactBytes": 10000000,
+    "maxRequestsPerTarget": 20,
+    "maxHostedCostUsd": 0,
+    "maxParallelOperations": 1
+  },
+  "provenance": {
+    "origin": "authored",
+    "createdAt": "2026-09-03T00:00:00.000Z",
+    "author": "supadiff-acceptance"
+  }
+}
