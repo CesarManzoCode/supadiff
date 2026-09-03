@@ -1,0 +1,74 @@
+{
+  "id": "target.reference",
+  "kind": "fake",
+  "runtime": { "runtime": "node", "version": "22.10.0" },
+  "config": {
+    "scriptId": "acceptance-reference",
+    "script": {
+      "identity": {
+        "targetKind": "fake",
+        "implementation": "fake-target",
+        "implementationVersion": "1.0.0",
+        "runtime": { "runtime": "node", "version": "22.10.0" },
+        "clientVersion": "0.0.0",
+        "platform": { "os": "linux", "arch": "x64" },
+        "effectiveConfigDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        "observedAt": "2026-09-03T00:00:00.000Z"
+      },
+      "declaredCapabilities": [
+        {
+          "id": "auth.password.signup",
+          "version": "1.0.0",
+          "level": "exact",
+          "constraints": {},
+          "evidence": [],
+          "observed": false
+        },
+        {
+          "id": "data.select",
+          "version": "1.0.0",
+          "level": "exact",
+          "constraints": {},
+          "evidence": [],
+          "observed": false
+        }
+      ],
+      "steps": {
+        "step.signup": {
+          "category": "success",
+          "status": 200,
+          "body": {
+            "status": "success",
+            "user": { "id": "owner-abc-123", "email": "owner@example.test" },
+            "session": {
+              "access_token": "ref.access.token",
+              "refresh_token": "ref-refresh-token",
+              "expires_in": 3600
+            }
+          }
+        },
+        "step.select": {
+          "category": "success",
+          "status": 200,
+          "body": { "status": "success", "rows": [{ "id": 1, "owner_id": "owner-abc-123" }] }
+        }
+      },
+      "teardownStatus": "complete"
+    }
+  },
+  "credentialRefs": [],
+  "lifecycle": {
+    "allocation": "provision-new",
+    "isolation": "fresh-instance",
+    "readinessTimeoutMs": 5000,
+    "teardownTimeoutMs": 5000,
+    "cleanup": "always",
+    "keepOnFailure": "deny"
+  },
+  "safety": {
+    "allowHosted": false,
+    "allowHostedCreate": false,
+    "allowHostedDestructive": false,
+    "maxHostedCostUsd": 0
+  }
+}
