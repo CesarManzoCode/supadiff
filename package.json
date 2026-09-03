@@ -18,6 +18,7 @@
     "test:observations": "pnpm --filter @supadiff/engine test -- observation",
     "test:secret-corpus": "pnpm --filter @supadiff/engine test -- secret-corpus",
     "test:comparison-honesty": "pnpm --filter @supadiff/engine test -- comparison-honesty",
+    "test:integration:supalite": "pnpm --filter @supadiff/targets test:integration",
     "supadiff": "node packages/cli/dist/bin.js"
   },
   "devDependencies": {

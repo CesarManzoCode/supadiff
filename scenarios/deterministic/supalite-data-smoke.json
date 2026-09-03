@@ -1,0 +1,75 @@
+{
+  "format": "supadiff.scenario",
+  "formatVersion": "1.0",
+  "id": "scn.supalite-data-smoke",
+  "revision": "1",
+  "title": "Cross-backend Data API smoke: insert then select",
+  "description": "L6 acceptance: the same scenario runs to completion on all four explicit Supalite target kinds. Deliberately dialect-neutral (no server-side UUID/timestamp defaults, no RLS) because supalite-sqlite's declarative Postgres-dialect schema/RLS pipeline does not bootstrap in this exact published version (see docs/TARGETS.md).",
+  "tags": ["l6", "acceptance", "supalite"],
+  "seed": "6",
+  "client": { "library": "supabase-js", "version": "2.97.0" },
+  "requirements": [
+    { "capability": "schema.apply", "range": "^1.0.0", "accept": ["exact"] },
+    { "capability": "data.insert", "range": "^1.0.0", "accept": ["exact"] },
+    { "capability": "data.select", "range": "^1.0.0", "accept": ["exact"] }
+  ],
+  "resources": [
+    {
+      "id": "schema.todos-minimal",
+      "mediaType": "application/sql",
+      "sha256": "sha256:791e4bb3a1897b4bc5697e911bb2a967b9afd5c6b592f7c79584de5f05b7dba1",
+      "length": 69,
+      "source": {
+        "kind": "inline",
+        "value": "create table todos (\n  id text primary key,\n  title text not null\n);\n"
+      },
+      "sensitivity": "public-fixture"
+    }
+  ],
+  "actors": [],
+  "steps": [
+    {
+      "id": "step.schema",
+      "kind": "schema.apply",
+      "phase": "bootstrap",
+      "input": { "resourceId": "schema.todos-minimal", "mode": "authoritative" }
+    },
+    {
+      "id": "step.insert",
+      "kind": "data.insert",
+      "phase": "exercise",
+      "dependsOn": ["step.schema"],
+      "input": {
+        "table": "todos",
+        "rows": [{ "id": "row-1", "title": "hello supalite" }],
+        "returning": true
+      }
+    },
+    {
+      "id": "step.select",
+      "kind": "data.select",
+      "phase": "exercise",
+      "dependsOn": ["step.insert"],
+      "input": {
+        "table": "todos",
+        "filters": [{ "field": "id", "op": "eq", "value": "row-1" }]
+      }
+    }
+  ],
+  "cleanup": [],
+  "comparison": { "policyId": "policy.supalite-data-smoke", "policyVersion": "1" },
+  "expectedOutcomes": [],
+  "limits": {
+    "maxSteps": 10,
+    "maxWallTimeMs": 60000,
+    "maxArtifactBytes": 10000000,
+    "maxRequestsPerTarget": 20,
+    "maxHostedCostUsd": 0,
+    "maxParallelOperations": 1
+  },
+  "provenance": {
+    "origin": "authored",
+    "createdAt": "2026-09-03T00:00:00.000Z",
+    "author": "supadiff-l6-sprint"
+  }
+}

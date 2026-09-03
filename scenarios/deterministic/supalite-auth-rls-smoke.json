@@ -1,0 +1,115 @@
+{
+  "format": "supadiff.scenario",
+  "formatVersion": "1.0",
+  "id": "scn.supalite-auth-rls-smoke",
+  "revision": "1",
+  "title": "Owner-scoped RLS: authenticated insert/select vs anonymous denial",
+  "description": "L6/L7 canonical Data+Auth+RLS shape (owner actor signs up, inserts an owned row, reads it back; an anonymous actor must not see it). Requires auth.password.signup, which this sprint found unsupported on supalite-sqlite (bare) for @supabase/lite@0.9.0 -- capability preflight resolves the whole scenario to 'unsupported' there, never a false pass or a false failure.",
+  "tags": ["l6", "l7", "acceptance", "supalite", "rls"],
+  "seed": "7",
+  "client": { "library": "supabase-js", "version": "2.97.0" },
+  "requirements": [
+    { "capability": "auth.password.signup", "range": "^1.0.0", "accept": ["exact"] },
+    { "capability": "data.insert", "range": "^1.0.0", "accept": ["exact"] },
+    { "capability": "data.select", "range": "^1.0.0", "accept": ["exact"] }
+  ],
+  "resources": [
+    {
+      "id": "schema.todos-rls",
+      "mediaType": "application/sql",
+      "sha256": "sha256:e21da3016211b1b92278bf366c244acf1e3839c892a3883fb5a002684f3b87ca",
+      "length": 443,
+      "source": {
+        "kind": "inline",
+        "value": "create table public.todos (\n  id uuid primary key default gen_random_uuid(),\n  owner_id uuid not null,\n  title text not null,\n  created_at timestamptz not null default now()\n);\n\nalter table public.todos enable row level security;\n\ncreate policy \"owner can select own todos\" on public.todos\n  for select using (auth.uid() = owner_id);\n\ncreate policy \"owner can insert own todos\" on public.todos\n  for insert with check (auth.uid() = owner_id);\n"
+      },
+      "sensitivity": "public-fixture"
+    }
+  ],
+  "actors": [
+    {
+      "id": "actor.owner",
+      "kind": "user",
+      "credentialSource": {
+        "kind": "generated",
+        "recipe": { "id": "fixture.password", "version": "1" }
+      },
+      "initialContext": "anonymous",
+      "sessionPolicy": "fresh-per-target"
+    }
+  ],
+  "steps": [
+    {
+      "id": "step.schema",
+      "kind": "schema.apply",
+      "phase": "bootstrap",
+      "input": { "resourceId": "schema.todos-rls", "mode": "authoritative" }
+    },
+    {
+      "id": "step.signup",
+      "kind": "auth.signUp",
+      "phase": "bootstrap",
+      "actor": "actor.owner",
+      "dependsOn": ["step.schema"],
+      "input": {
+        "email": "owner@example.test",
+        "password": { "$secretRef": "fixture.password" }
+      },
+      "capture": [
+        {
+          "name": "owner-id",
+          "from": { "kind": "json-pointer", "pointer": "/user/id" },
+          "valueType": "identifier",
+          "sensitivity": "identifier",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "step.insert",
+      "kind": "data.insert",
+      "phase": "exercise",
+      "actor": "actor.owner",
+      "dependsOn": ["step.signup"],
+      "input": {
+        "table": "todos",
+        "rows": [{ "owner_id": { "$ref": "capture:owner-id" }, "title": "owner todo" }],
+        "returning": true
+      }
+    },
+    {
+      "id": "step.select-owner",
+      "kind": "data.select",
+      "phase": "exercise",
+      "actor": "actor.owner",
+      "dependsOn": ["step.insert"],
+      "input": {
+        "table": "todos",
+        "filters": [{ "field": "owner_id", "op": "eq", "value": { "$ref": "capture:owner-id" } }]
+      }
+    },
+    {
+      "id": "step.select-anon",
+      "kind": "data.select",
+      "phase": "exercise",
+      "dependsOn": ["step.insert"],
+      "input": { "table": "todos", "filters": [] }
+    }
+  ],
+  "cleanup": [],
+  "comparison": { "policyId": "policy.supalite-auth-rls-smoke", "policyVersion": "1" },
+  "expectedOutcomes": [],
+  "limits": {
+    "maxSteps": 10,
+    "maxWallTimeMs": 60000,
+    "maxArtifactBytes": 10000000,
+    "maxRequestsPerTarget": 20,
+    "maxHostedCostUsd": 0,
+    "maxParallelOperations": 1
+  },
+  "provenance": {
+    "origin": "authored",
+    "createdAt": "2026-09-03T00:00:00.000Z",
+    "author": "supadiff-l6-sprint"
+  }
+}

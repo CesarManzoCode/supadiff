@@ -33,9 +33,96 @@ export const FAKE_TARGET_CONFIG_SCHEMA = {
 
 registerSchema(FAKE_TARGET_CONFIG_SCHEMA);
 
-/** Per-`TargetKind` closed config schema `$id`s. Real Supalite/Supabase kinds are L6+ (not yet registered). */
+/**
+ * Closed config schema shared by all four Supalite backends (§4.4: "Admin mode,
+ * `forceRollback`, experimental feature flags, key mode, and route prefixes are
+ * mandatory explicit config fields. Defaults may be expanded by the compiler but are
+ * always written to the plan."). Every field here is REQUIRED — no implicit engine
+ * default is allowed to silently decide RLS/privilege-relevant behavior.
+ */
+function supaliteConfigSchema(id: string) {
+  return {
+    $id: id,
+    $schema: "https://json-schema.org/draft/2020-12/schema",
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      admin: {
+        type: "boolean",
+        description:
+          "Local admin mode (§4.4, README ServerOptions.admin): keyless same-origin/loopback " +
+          "requests are elevated to service_role. MUST be false for any RLS/privilege-relevant scenario.",
+      },
+      forceRollback: {
+        type: "boolean",
+        description:
+          "Test-only PostgREST mode: wraps each request in a transaction and rolls it back.",
+      },
+      experimentalFeatures: {
+        type: "array",
+        items: { enum: ["storage"] },
+        description: "Feature-gated surfaces to enable, e.g. EXPERIMENTAL_STORAGE.",
+      },
+      keyMode: {
+        const: "opaque-v1",
+        description:
+          "Opaque sb_publishable_*/sb_secret_* keys only (§2.4 GT); legacy JWT-as-apikey is not " +
+          "supported by this package version and is never modeled as a config option.",
+      },
+      routePrefixes: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          auth: { type: "string", minLength: 1 },
+          rest: { type: "string", minLength: 1 },
+          storage: { type: "string", minLength: 1 },
+        },
+        required: ["auth", "rest", "storage"],
+      },
+      transport: {
+        enum: ["socket-server"],
+        description:
+          "§4.4: in-process Fetch and socket-server transports are distinct capabilities; this " +
+          "build only implements socket-server (a real spawned `lite start` process on a leased port).",
+      },
+      readinessTimeoutMs: { type: "integer", minimum: 1000 },
+    },
+    required: [
+      "admin",
+      "forceRollback",
+      "experimentalFeatures",
+      "keyMode",
+      "routePrefixes",
+      "transport",
+      "readinessTimeoutMs",
+    ],
+  } as const;
+}
+
+export const SUPALITE_SQLITE_CONFIG_SCHEMA = supaliteConfigSchema(
+  "supadiff://schema/target-config/supalite-sqlite.json",
+);
+export const SUPALITE_SQLITE_POSTGRES_CONFIG_SCHEMA = supaliteConfigSchema(
+  "supadiff://schema/target-config/supalite-sqlite-postgres.json",
+);
+export const SUPALITE_PGLITE_CONFIG_SCHEMA = supaliteConfigSchema(
+  "supadiff://schema/target-config/supalite-pglite.json",
+);
+export const SUPALITE_POSTGRES_CONFIG_SCHEMA = supaliteConfigSchema(
+  "supadiff://schema/target-config/supalite-postgres.json",
+);
+registerSchema(SUPALITE_SQLITE_CONFIG_SCHEMA);
+registerSchema(SUPALITE_SQLITE_POSTGRES_CONFIG_SCHEMA);
+registerSchema(SUPALITE_PGLITE_CONFIG_SCHEMA);
+registerSchema(SUPALITE_POSTGRES_CONFIG_SCHEMA);
+
+/** Per-`TargetKind` closed config schema `$id`s. Hosted/local Supabase kinds remain L7+ (not yet registered). */
 export const TARGET_CONFIG_SCHEMA_BY_KIND: Record<string, string> = {
   fake: FAKE_TARGET_CONFIG_SCHEMA.$id,
+  "supalite-sqlite": SUPALITE_SQLITE_CONFIG_SCHEMA.$id,
+  "supalite-sqlite-postgres": SUPALITE_SQLITE_POSTGRES_CONFIG_SCHEMA.$id,
+  "supalite-pglite": SUPALITE_PGLITE_CONFIG_SCHEMA.$id,
+  "supalite-postgres": SUPALITE_POSTGRES_CONFIG_SCHEMA.$id,
 };
 
 export const TARGET_SPEC_SCHEMA = {
