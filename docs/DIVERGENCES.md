@@ -28,29 +28,32 @@ One JSON file per entry (`packages/spec/src/divergence/types.ts` and
 
 ## Matching (`@supadiff/engine`'s `matchKnownDivergence`)
 
-An entry matches a failed comparison only when **every** selector and the
-rule id/version match exactly, `status === "active"`, and the current time
-is before `expiresAt`. Implemented outcomes:
+An entry matches a failed comparison only when **all** of the following
+hold: reference/candidate target selector (kind, backend, bounded semver
+version range — real `semver` range matching, not string equality),
+scenario selector (including `revisionRange` when declared), step selector,
+observable path, rule id/version, `capability` (when declared, against the
+capability actually resolved for this comparison), `status === "active"`,
+the current time is before `expiresAt`, **and** `expectedFailure` (a
+`PredicateAst`) evaluates `true` against the real observed failure facts
+(`{reference: {...}, candidate: {...}}` over each side's contract fields —
+reusing the same `evaluatePredicate` the `invariant`/`temporal-invariant`
+rule kinds use). An entry can never match on error text alone, and a
+registry entry registered for one failure never reclassifies a structurally
+similar but factually different failure on the same selector. Implemented
+outcomes:
 
-- Zero matching active entries → `new-divergence`.
-- Exactly one → `known-divergence` (the result carries `divergenceId`).
+- Zero matching entries (structural or predicate) → `new-divergence`.
+- Exactly one predicate-matching active, non-expired entry →
+  `known-divergence` (the result carries `divergenceId`).
 - More than one matching active entry → `inconclusive` (registry error,
   never picked arbitrarily — this is a first-class test, see
-  `packages/engine/test/comparison-honesty/mutation-and-benign.test.ts`).
-- All matching entries expired → treated as no match (`new-divergence`).
-
-## Scope limit on failure-predicate matching
-
-`expectedFailure.predicate` (a `PredicateAst`) is part of the persisted,
-validated entry shape, but this delivery's matcher does not yet evaluate it
-against the actual failure's facts — matching is selector-exact (id/version/
-path/rule/target-kind/scenario/step), not predicate-evaluated. A registry
-entry therefore currently excuses _any_ failure at its exact selector, not
-only one matching its stated `expectedFailure` condition. This is recorded
-here and in `docs/LIMITATIONS.md`; the predicate schema and evaluator
-(`@supadiff/engine`'s `evaluatePredicate`) already exist and are used
-elsewhere (`invariant`/`temporal-invariant` rules) — wiring them into
-divergence matching is a bounded follow-up, not a redesign.
+  `packages/engine/test/comparison-honesty/mutation-and-benign.test.ts` and
+  `target-selector-and-capability.test.ts`).
+- A structurally matching entry that has expired → `new-divergence` plus an
+  `expired-registry-entry` diagnostic transformation on the explanation,
+  rather than silently falling through to a plain new-divergence with no
+  trace that a now-expired entry once covered this failure.
 
 ## Directory convention
 

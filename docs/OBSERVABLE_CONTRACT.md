@@ -40,14 +40,23 @@ silent behavior: `docs/LIMITATIONS.md` records it.
 
 ## Field coverage and fail-closed behavior
 
-`computeCoverage` classifies every top-level key of a raw response body into
-exactly one of: `contractualFields`, `diagnosticFields`, `ignoredFields`, or
-`unassessedFields`. A key not accounted for by the first three becomes
-`unassessedFields`, and `compareStep` (`@supadiff/engine`) turns every
-unassessed field into its own `inconclusive` `ComparisonResult` — it never
-silently drops it. Coverage is computed one level deep (top-level response
-keys); this is a scoped simplification recorded in `docs/LIMITATIONS.md`,
-not arbitrary-depth accounting.
+`computeCoverage` walks the full JSON tree of a raw response body,
+recursively, and classifies every field at every depth into exactly one of:
+`contractualFields`, `diagnosticFields`, `ignoredFields`, or
+`unassessedFields` (RFC 6901 `~0`/`~1` escaping applied to composed
+pointers). A field not accounted for by the first three — at any nesting
+depth, inside objects or arrays — becomes `unassessedFields`, and
+`compareStep` (`@supadiff/engine`) turns every unassessed field into its own
+`inconclusive` `ComparisonResult` — it never silently drops it.
+
+**Contractual atomic subtree rule:** when a path is declared exactly (in
+`contractual`, `diagnostic`, or `ignored`), traversal stops there — its
+children are never individually walked and therefore can never become
+`unassessed`. This is intentional: a projector that declares e.g. `/rows` or
+`/session` as one opaque contractual value is delegating that subtree's
+internal judgment to a downstream comparison rule (an `unordered-collection`
+over `/rows`, for example), not asking field coverage to also police its
+internals field-by-field.
 
 ## Redaction policy implemented
 
@@ -59,17 +68,35 @@ All 13 `RuleExpression` kinds from §7.1 are implemented in
 `@supadiff/engine`'s `comparison/rule-engine.ts`: `exact`, `object`,
 `ordered-collection`, `unordered-collection`, `subset`, `error-category`,
 `relationship`, `invariant`, `token-claims`, `temporal-invariant`,
-`url-redemption`, `state-readback`, `explicit-ignore`. Depth of test
-coverage varies — see `docs/TESTING.md` and `docs/LIMITATIONS.md`.
+`url-redemption`, `state-readback`, `explicit-ignore` — each with dedicated
+adversarial test coverage in `comparison-honesty` (see `docs/TESTING.md`).
+Type safety is real: `object`/`ordered-collection`/`unordered-collection`/
+`subset` never coerce a non-object to `{}` or a non-array to `[]`; a type
+mismatch fails rather than risking an accidental match. `subset` and keyed
+`unordered-collection` use the declared `item` sub-rule (not raw canonical
+equality) with one-to-one multiplicity, and a duplicate key on either side
+fails closed instead of an ambiguous pick. `relationship` requires the same
+subject _and_ object on both sides, not just predicate presence.
+`url-redemption` applies `RedemptionContract` (`expectStatusCategory`,
+`bytesMustMatch`) and never touches a URL string. `state-readback` uses the
+declared `before`/`after` pointers and `DeltaContract`
+(`expectedChangedPaths`/`expectedUnchangedPaths`) to judge an actual delta.
 
 ## Rule selection
 
 `selectRule` (`@supadiff/engine`) matches on
 `service + operationId + operationVersion + observablePath + reference/candidate
-target kind (+ optional backend/versionRange) + optional capabilityContext`,
-and picks the most specific match by counting how many optional selector
-fields are pinned. Two equally specific matches throw
-`AmbiguousRuleSelectionError` rather than picking one — this is enforced at
-comparison time in this delivery (the contract frames it as a compile-time
-guarantee; a static policy linter that runs at "compile" time before any run
-is a natural extension, not yet built).
+target kind + backend + bounded semver versionRange + capabilityContext`
+(the target-selector dimensions are real matches against
+`TargetSelectionIdentity`, using the `semver` library for range checks — a
+rule scoped to `supalite-sqlite@0.9.x` does not match
+`supalite-postgres@0.9.x` or a version outside `0.9.x`), and picks the most
+specific match by counting how many optional selector fields are pinned. A
+capability-scoped rule (`selector.capabilityContext`) is only selectable
+when that capability actually resolved (declared+probed, gated by the
+requirement's `accept` list) to something other than `unsupported` for the
+comparison in play — never inferred from error-message strings. Two equally
+specific matches throw `AmbiguousRuleSelectionError` rather than picking
+one — this is enforced at comparison time in this delivery (the contract
+frames it as a compile-time guarantee; a static policy linter that runs at
+"compile" time before any run is a natural extension, not yet built).

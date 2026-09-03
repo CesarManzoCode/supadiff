@@ -5,9 +5,9 @@
 | Layer        | Package            | Test files | Tests   |
 | ------------ | ------------------ | ---------- | ------- |
 | L1 spec      | `@supadiff/spec`   | 5          | 35      |
-| L2-L5 engine | `@supadiff/engine` | 6          | 44      |
-| L5 CLI       | `supadiff` (cli)   | 4          | 21      |
-| **Total**    |                    | **15**     | **100** |
+| L2-L5 engine | `@supadiff/engine` | 10         | 126     |
+| L5 CLI       | `supadiff` (cli)   | 4          | 24      |
+| **Total**    |                    | **19**     | **185** |
 
 All numbers above are reproducible by running the commands below; they are
 not claimed from memory.
@@ -51,8 +51,25 @@ node packages/cli/dist/bin.js run test/fixtures/basic.json \
   the secret corpus described in `docs/SECURITY.md`.
 - **L4** (`packages/engine/test/comparison-honesty`): one mutation per
   contractual field must produce `new-divergence`; benign differences (key
-  order, unordered rows) must not; known-divergence expiry and overlap
-  behavior; ambiguous rule selection throws rather than picking a winner.
+  order, unordered rows) must not; known-divergence expiry, overlap, and
+  per-dimension isolation (version/backend/path/rule/predicate/scenario/
+  step/direction/capability each independently block a match); ambiguous
+  rule selection throws rather than picking a winner; target-selector
+  backend/semver-range matching and capability-context selection
+  (`target-selector-and-capability.test.ts`); and dedicated adversarial
+  coverage for all 13 `RuleExpression` kinds — type safety, subset/keyed
+  multiplicity, relationship subject/object correspondence,
+  `RedemptionContract`, `DeltaContract` — in `rule-algebra.test.ts`.
+- **`ExecutionPlan`** (`packages/engine/test/execution/execution-plan.test.ts`):
+  a plan cannot be frozen before every target's runtime identity/capability
+  probe genuinely completed; a target identity mismatch refuses to produce
+  a plan and the enclosing run finalizes `inconclusive`; capability
+  resolution is present and populated; identical inputs produce identical
+  plan content (`planId`, digests, target slots, capability resolution)
+  across two builds differing only in `createdAt`; a different observed
+  identity changes the content-derived `planId`; and the serialized plan
+  contains no secrets or live endpoint URLs, including one built from a
+  real run with actor secrets in play.
 - **L5** (`packages/engine/test/artifact`, `packages/cli/test`): byte-
   identical bundle assembly, artifactId changes on payload change, blocked
   artifact on an unexplained secret leak, checksums covering every payload
@@ -62,6 +79,14 @@ artifact`, exact exit codes (0/10/20/30) under different `--fail-on`
   configurations, JSON-stdout purity (exactly one document), NDJSON event
   ordering, human stdout/stderr separation, and offline `compare` producing
   the same outcome as a live two-target `run` on identical fixtures.
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs `pnpm install --frozen-lockfile` then
+`pnpm check` on Node 22 with Corepack pinned to the exact `packageManager`
+version in the root `package.json`, on every pull request targeting `main`
+and every push to `main`. One job, no matrix, no secrets; superseded runs on
+the same ref are cancelled via `concurrency`.
 
 ## Honesty gates actually enforced
 

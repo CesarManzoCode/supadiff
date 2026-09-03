@@ -21,62 +21,79 @@ backend.
 These are deliberate, documented choices, not oversights — each is called
 out at its point of implementation with a contract section reference:
 
-1. **Field coverage is one level deep.** `computeCoverage`
-   (`@supadiff/engine`) accounts for top-level response-body keys only, not
-   arbitrary nesting. A field two levels deep that a projector doesn't
-   consume will not be flagged `unassessed` unless it happens to be a
-   top-level key. §7.3's fail-closed guarantee is real but shallower than
-   an arbitrary-depth walk would give.
-
-2. **Known-divergence matching is selector-exact, not predicate-evaluated.**
-   `matchKnownDivergence` matches on id/version/path/rule/target-kind/
-   scenario/step exactly, but does not yet evaluate `expectedFailure`
-   (a `PredicateAst`) against the actual failure. An entry currently excuses
-   any failure at its exact selector, not only one matching its stated
-   condition. See `docs/DIVERGENCES.md`.
-
-3. **`token-claims`, `temporal-invariant`, `url-redemption`, and
-   `state-readback` rule kinds are implemented but thinly exercised.** All
-   13 `RuleExpression` kinds type-check and evaluate correctly on their own
-   terms (verified by direct unit coverage of `exact`, `object`,
-   `ordered-collection`, `unordered-collection`, `subset`, `error-category`,
-   `relationship`, `invariant`, `explicit-ignore` in
-   `comparison-honesty` tests), but the four listed here have no dedicated
-   test beyond type-checking, because no fixture in this delivery emits
-   decoded JWT claims, a bounded timestamp fact, or a stateful before/after
-   readback pair.
-
-4. **Operation catalog IDs use a distinct, case-permitting identifier
+1. **Operation catalog IDs use a distinct, case-permitting identifier
    pattern** from every other `StableId` in the system, to reconcile a
    direct contradiction between §2.1 and §2.4's literal examples. See
    `docs/adr/0001-operation-id-casing.md`.
 
-5. **Artifacts are directory trees, not ZIP files**, per the contract's own
+2. **Artifacts are directory trees, not ZIP files**, per the contract's own
    "or" in §9.1. See `docs/adr/0002-artifact-directory-format.md`.
 
-6. **`compareCommand`'s single-artifact re-render mode** does not
-   distinguish a "run" artifact (no `comparison/results.json` content) from
-   a "comparison" artifact — both currently contain a `comparison/
-results.json` file (empty for a run artifact), so pointing `compare` at
-   a bare run artifact returns an empty result set rather than a distinct
-   error.
-
-7. **CLI `--policy` is a required-in-practice flag** for a meaningful `run`;
-   the contract's CLI contract (§14.1) does not specify how the comparison
-   policy file is located, only that a scenario references one by
-   `policyId`/`policyVersion`. This delivery requires the operator to pass
-   `--policy <path>` explicitly (default: an empty-rules policy, which
-   makes every observable path `inconclusive` for lack of a matching rule).
-
-8. **Hosted safety flags are parsed, not enforced.** `--allow-hosted`,
+3. **Hosted safety flags are parsed, not enforced.** `--allow-hosted`,
    `--allow-hosted-create`, `--allow-hosted-destructive`,
    `--max-hosted-cost-usd` are accepted by the CLI argument parser but have
    no effect, because no hosted or local-Supabase driver exists to gate.
 
-9. **`verify-upgrade`, `replay`, and `reduce`** are wired into the CLI's
+4. **`verify-upgrade`, `replay`, and `reduce`** are wired into the CLI's
    command dispatch and explicitly return "not implemented" (exit 30) —
    they do not pretend to have any capability, per the task's explicit
    instruction.
+
+5. **Target identity mismatch detection is exact-match only.** §2.7 allows
+   "unless the target policy explicitly permits a range" as an exception to
+   a requested-vs-observed version mismatch producing an inconclusive
+   outcome; no such range-permitting policy field is modeled yet in
+   `TargetSpec`/`TargetLifecyclePolicy`, so `buildExecutionPlan` currently
+   requires an exact string match between a declared
+   `TargetSpec.package.version` and the observed
+   `TargetIdentity.implementationVersion` whenever a package version is
+   declared at all. This is strictly more conservative than the contract
+   requires (an exact-only check can never silently pass a real drift), not
+   a gap in the fail-closed guarantee itself.
+
+6. **`ExecutionPlan.orderedSteps` records operation id/version, not the
+   fully resolved per-step input.** The plan proves ordering and freezes
+   target identity/capability resolution before execution begins, but does
+   not yet re-materialize each step's resolved `input` (refs/captures are
+   still resolved lazily during execution, as before). Replay/reduction
+   (L9/L10, out of scope for this delivery) would need that extension.
+
+### Previously tracked simplifications closed in this hardening pass
+
+The following gaps were tracked here in an earlier revision of this
+document and are now closed (kept here, not deleted, so the history of what
+changed and why is auditable):
+
+- Field coverage now walks the full JSON tree recursively (was: top-level
+  keys only), with an explicit "contractual atomic subtree" rule so a
+  projector-declared opaque field's children are never spuriously
+  `unassessed`. See `docs/OBSERVABLE_CONTRACT.md`.
+- `matchKnownDivergence` now evaluates `expectedFailure` against real
+  observed failure facts, not selector-exact-only matching. See
+  `docs/DIVERGENCES.md`.
+- All 13 `RuleExpression` kinds now have dedicated adversarial test
+  coverage, and the previously presence-only kinds (`relationship`,
+  `url-redemption`, `state-readback`) now judge real semantic content
+  (subject/object correspondence, `RedemptionContract`, `DeltaContract`
+  respectively). `subset` and keyed `unordered-collection` use the
+  declared item rule with one-to-one multiplicity instead of raw/canonical
+  equality. `object`/array rule kinds never coerce a type mismatch into an
+  accidental empty-value match. See `docs/OBSERVABLE_CONTRACT.md`.
+- `selectRule` now matches real target `backend` and a bounded `semver`
+  `versionRange`, and capability-scoped rule selection is driven by the
+  frozen capability resolution rather than being unreachable. See
+  `docs/OBSERVABLE_CONTRACT.md`.
+- `compareCommand`'s single-artifact mode now distinguishes a "run"
+  artifact from a "comparison" artifact via `manifest.artifactKind` and
+  refuses a bare run artifact with an explicit error, instead of returning
+  an empty result set as if it were a real (if trivial) comparison.
+- The CLI no longer synthesizes a silent empty-rules comparison policy for
+  a multi-target `run` when `--policy` is omitted; it fails validation,
+  before any target is provisioned, and validates that a supplied
+  `--policy` agrees with the scenario's declared `comparison` ref.
+- `ExecutionPlan` (§2.3) is now a real, separately built, frozen value
+  object (`buildExecutionPlan`, `@supadiff/engine`) rather than only a
+  named FSM state — see `docs/ARCHITECTURE.md`.
 
 ## What is proven, precisely
 
