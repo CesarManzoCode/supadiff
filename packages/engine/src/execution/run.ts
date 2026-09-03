@@ -643,11 +643,25 @@ export async function runScenario(
           /* already past quiescing */
         }
       }
+      // The normal path is quiescing -> tearing-down. An abnormal/early failure (e.g. a
+      // target identity mismatch caught at plan-freeze, while the FSM is still at
+      // `provisioned`/`identified`/`capability-probed`) reaches teardown through the FSM's
+      // sanctioned recovery path instead (§4.2: `<state> -> recovering -> closed|leaked`).
+      // Either way `session.teardown()` MUST run — a session that provisioned real
+      // resources leaks them if a bookkeeping transition silently skips it.
+      let readyForTeardown = false;
       try {
         ctx.fsm.transition("tearing-down", `teardown (${reason})`);
+        readyForTeardown = true;
       } catch {
-        continue;
+        try {
+          ctx.fsm.transition("recovering", `teardown (${reason})`);
+          readyForTeardown = true;
+        } catch {
+          /* already terminal (closed/leaked) — nothing to reclaim */
+        }
       }
+      if (!readyForTeardown) continue;
       const signal = opts.signal ?? new AbortController().signal;
       const report = await ctx.session.teardown(
         reason === "success" ? "success" : "failure",

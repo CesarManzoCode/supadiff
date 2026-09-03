@@ -1,7 +1,10 @@
 # Observable contract
 
-What SupaDiff judges, and how — as implemented for the 11 representative
-operations this delivery projects and compares.
+What SupaDiff judges, and how — as implemented for the 19 representative
+operations this delivery projects and compares (the original 11, plus 8
+added for L11's Storage surface). All 19 are exercised for real against
+`@supabase/lite@0.9.0` where a real driver exists (L6/L11); every other
+catalog operation still executes but produces no semantic observation.
 
 ## Pipeline
 
@@ -18,25 +21,34 @@ projectors), `observation/coverage.ts` (field accounting).
 
 ## Projectors implemented
 
-| Operation                   | Contractual fields                          | Diagnostic fields                                   | Notes                                                                                           |
-| --------------------------- | ------------------------------------------- | --------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `auth.signUp@1`             | `/status`, `/user/id`, `/user/email`        | —                                                   | session presence as a state fact; `session.belongs-to-actor` relationship, never token equality |
-| `auth.signInWithPassword@1` | same shape as `auth.signUp@1`               | —                                                   |                                                                                                 |
-| `auth.refreshSession@1`     | same shape                                  | —                                                   |                                                                                                 |
-| `data.select@1`             | `/status`, `/rows`                          | —                                                   | `/count` is explicitly ignored (receipt-backed), not silently dropped                           |
-| `data.insert@1`             | `/status`, `/rows`                          | —                                                   |                                                                                                 |
-| `observe.dataReadback@1`    | `/status`, `/rows`                          | —                                                   |                                                                                                 |
-| `storage.createSignedUrl@1` | `/path`, `/expiresAt`                       | `/signedUrl` (redacted marker only — never the URL) | `storage.signedurl-issued-for-path` relationship                                                |
-| `storage.redeemUrl@1`       | `/status`, `/bytesDigest`, `/contentLength` | —                                                   | judges redemption behavior, never the URL string                                                |
-| `cli.invoke@1`              | `/exitCode`                                 | `/stdout`, `/stderr`                                | raw text is diagnostic unless the scenario declares structured output                           |
-| `observe.authSession@1`     | `/active`, `/subject`, `/role`              | —                                                   |                                                                                                 |
-| `assert.invariant@1`        | `/satisfied`                                | `/detail`                                           |                                                                                                 |
+| Operation                   | Contractual fields                                             | Diagnostic fields                                   | Notes                                                                                                        |
+| --------------------------- | -------------------------------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `auth.signUp@1`             | `/status`, `/user/id`, `/user/email`                           | —                                                   | session presence as a state fact; `session.belongs-to-actor` relationship, never token equality              |
+| `auth.signInWithPassword@1` | same shape as `auth.signUp@1`                                  | —                                                   |                                                                                                              |
+| `auth.refreshSession@1`     | same shape                                                     | —                                                   |                                                                                                              |
+| `data.select@1`             | `/status`, `/rows`                                             | —                                                   | `/count` is explicitly ignored (receipt-backed), not silently dropped                                        |
+| `data.insert@1`             | `/status`, `/rows`                                             | —                                                   |                                                                                                              |
+| `observe.dataReadback@1`    | `/status`, `/rows`                                             | —                                                   |                                                                                                              |
+| `storage.createSignedUrl@1` | `/path`, `/expiresAt`                                          | `/signedUrl` (redacted marker only — never the URL) | `storage.signedurl-issued-for-path` relationship                                                             |
+| `storage.redeemUrl@1`       | `/status`, `/bytesDigest`, `/contentLength`                    | —                                                   | judges redemption behavior, never the URL string; L11 found a real Supalite bug here (`docs/DIVERGENCES.md`) |
+| `storage.createBucket@1`    | `/status`, `/name`                                             | —                                                   | L11                                                                                                          |
+| `storage.upload@1`          | `/status`, `/path`, `/bytesDigest`, `/contentLength`, `/owner` | —                                                   | L11; digest/length from real uploaded bytes, not metadata                                                    |
+| `storage.download@1`        | `/status`, `/bytesDigest`, `/contentLength`                    | —                                                   | L11; digest/length from real downloaded bytes                                                                |
+| `storage.list@1`            | `/status`, `/entries`                                          | —                                                   | L11                                                                                                          |
+| `storage.remove@1`          | `/status`, `/removed`                                          | —                                                   | L11                                                                                                          |
+| `storage.move@1`            | `/status`                                                      | —                                                   | L11                                                                                                          |
+| `storage.copy@1`            | `/status`, `/bytesDigest`                                      | —                                                   | L11; digest of the copy, from real downloaded bytes                                                          |
+| `observe.storageObject@1`   | `/owner`, `/bytesDigest`, `/contentLength`                     | —                                                   | L11; `storage.owner-equals` relationship                                                                     |
+| `cli.invoke@1`              | `/exitCode`                                                    | `/stdout`, `/stderr`                                | raw text is diagnostic unless the scenario declares structured output                                        |
+| `observe.authSession@1`     | `/active`, `/subject`, `/role`                                 | —                                                   |                                                                                                              |
+| `assert.invariant@1`        | `/satisfied`                                                   | `/detail`                                           |                                                                                                              |
 
 Every other catalog operation (§2.4) is known to the catalog (validated,
 capability-gated) but has no projector wired in this delivery — a step using
-one still executes against a fake target, but produces no semantic
-observation and therefore is not compared. This is a scope limit, not a
-silent behavior: `docs/LIMITATIONS.md` records it.
+one still executes (against a fake target, or a real Supalite target where
+one of L6/L11's operations is used), but produces no semantic observation
+and therefore is not compared. This is a scope limit, not a silent
+behavior: `docs/LIMITATIONS.md` records it.
 
 ## Field coverage and fail-closed behavior
 

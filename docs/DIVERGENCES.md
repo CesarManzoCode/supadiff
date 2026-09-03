@@ -55,6 +55,62 @@ outcomes:
   rather than silently falling through to a plain new-divergence with no
   trace that a now-expired entry once covered this failure.
 
+## Active entries: the Supalite `signedUrl`/`signedURL` sign-URL bug
+
+`divergences/active/supalite-signed-url-key-name.json` and
+`...-length.json` — the first genuine `KnownDivergence` entries in this
+repository. L11's Storage testing found that `@supabase/lite@0.9.0`'s
+sign-URL endpoint returns the JSON key `signedUrl` (lowercase), while
+`supabase/storage-api@v1.70.3` returns `signedURL` (capital) — which is what
+the official `@supabase/storage-js@2.97.0` client reads to build
+`createSignedUrl()`'s URL. Confirmed against **both real targets** once L7
+unblocked:
+
+- **reference** `supabase-local`: `createSignedUrl()` → the client redeems
+  the real uploaded bytes, HTTP 200.
+- **candidate** `supalite-sqlite-postgres`: the client's URL is undefined,
+  the scenario redeems `${baseUrl}/storage/v1undefined`, and Supalite serves
+  its admin HTML with HTTP 200 — a successful-looking response carrying the
+  wrong content.
+
+So it is a genuine cross-target `new-divergence` at `scn.supalite-storage-
+smoke` `step.redeem` on `/bytesDigest` and `/contentLength`: identical
+inputs, both HTTP 200, different bytes. Each entry's `expectedFailure`
+predicate asserts exactly that shape (`/candidate/status == 200 &&
+/reference/status == 200 && /candidate/<field> != /reference/<field>`), so it
+never reclassifies a structurally similar but factually different failure.
+`packages/targets/test/integration/peer-storage-local.test.ts` proves the
+comparator reports `new-divergence` without the registry and
+`known-divergence` (with `divergenceId`) with it. The same bug reproduces
+identically on `supalite-pglite`/`supalite-postgres` (see `docs/TARGETS.md`);
+a separate entry would be added if a scenario exercises those as the
+candidate. The Supalite capability record `storage.signed-url.redeem =
+unsupported` is unchanged.
+
+## Active entries: `lite upgrade --target local` drops the serial-sequence position
+
+`divergences/active/lite-upgrade-local-sequence-not-reset.json` — found by L8
+(`supadiff verify-upgrade`). `@supabase/lite@0.9.0`'s local-upgrade data phase
+only emits `SELECT setval(pg_get_serial_sequence(...))` for a column whose live
+introspection shows a `nextval(` default or a literal `serial`/`bigserial`
+type. When the upgrade **source** is a file-backed Supalite target
+(`supalite-sqlite-postgres`), the underlying SQLite introspection exposes
+neither — the deparse cache records a `bigserial` column as
+`isSerial:false, defaultValue:null` — so `lite upgrade` migrates the row IDs
+(`id 1..N`) but leaves the destination sequence at its start value. The first
+post-upgrade `INSERT … (label) VALUES (…)` on the Supabase-local destination
+then draws `nextval` = 1 and fails with `duplicate key value violates unique
+constraint`. A plain Supalite clone of the same source (baseline B) is
+unaffected: its next insert lands at `N+1`.
+
+`verify-upgrade` records this as check `sequence-next-use = divergence` (it does
+**not** fail the run) and surfaces `div.lite-upgrade-local-sequence-not-reset`
+in the report's `divergences[]`. Realigning the sequence is left to the
+operator: `SELECT setval(pg_get_serial_sequence('public.<table>','id'), (SELECT
+max(id) FROM public.<table>))`. `UPGRADE.md`'s "Sequence resets after all
+migrated user data has been inserted" holds for `pglite`/`postgres` sources,
+not for the file-backed `sqlite`/`sqlite-postgres` ones.
+
 ## Directory convention
 
 `divergences/active/*.json` — loaded by the CLI (`--divergences <dir>`,

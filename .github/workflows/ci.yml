@@ -37,3 +37,97 @@ jobs:
 
       - name: Run checks (boundary-check, lint, build, typecheck, format, test)
         run: pnpm check
+
+  real-targets:
+    name: real targets (node 22, pnpm 9.15.0)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: supadiff
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      SUPADIFF_TEST_POSTGRES_ADMIN_URL: postgresql://postgres:supadiff@127.0.0.1:5432/postgres
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Prepare pinned pnpm (packageManager field)
+        run: corepack prepare pnpm@9.15.0 --activate
+
+      - name: Install dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      # Workspace packages export from ./dist/...; build before running suites.
+      - name: Build workspace packages
+        run: pnpm build
+
+      # Real @supabase/lite@0.9.0 processes and real supabase-js traffic — no
+      # hosted credentials, no Docker, no Cartesian target matrix.
+      - name: L6 — Supalite target family (all 4 backends)
+        run: pnpm test:integration:supalite
+
+      - name: L9 — fault lab + replay
+        run: pnpm test:fault-lab:replay
+
+      - name: L10 — reducer
+        run: pnpm test:fault-lab:reduce
+
+      - name: L12 — generators (byte-identical replay, preconditions, 10,000 validation-only generations)
+        run: pnpm test:generators
+
+      - name: L12 — generated smoke (live sample against a real Supalite target)
+        run: pnpm test:generated-smoke
+
+  docker-targets:
+    name: docker targets — supabase-local L7/L8/L11 (node 22, pnpm 9.15.0)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Prepare pinned pnpm (packageManager field)
+        run: corepack prepare pnpm@9.15.0 --activate
+
+      - name: Install dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      # Workspace packages export from ./dist/...; build before running suites.
+      - name: Build workspace packages
+        run: pnpm build
+
+      # ubuntu-latest runners ship Docker. These bring up a real Supabase stack
+      # via the pinned `supabase` CLI 2.116.0 (Postgres + GoTrue + PostgREST +
+      # Storage API + Kong). No hosted credentials. First run pulls ~5-8 GB of
+      # images.
+      - name: L7 — Supalite <-> supabase-local peer (Data + Auth + RLS) + failure modes
+        run: pnpm test:integration:peer-data-auth-rls
+
+      - name: L8 — verify-upgrade (Supalite -> real `lite upgrade` -> supabase-local)
+        run: pnpm test:integration:upgrade-local
+
+      - name: L11 — Storage peer comparison (Supalite x2 and Supalite <-> supabase-local)
+        run: pnpm test:integration:peer-storage

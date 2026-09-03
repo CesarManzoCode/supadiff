@@ -1,0 +1,58 @@
+{
+  "format": "supadiff.known-divergence",
+  "formatVersion": "1.0",
+  "id": "div.lite-upgrade-local-sequence-not-reset",
+  "title": "`lite upgrade --target local` from a file-backed Supalite source does not carry the serial-sequence position, so the first post-upgrade insert collides",
+  "status": "active",
+  "referenceSelector": {
+    "kind": "supalite-sqlite-postgres"
+  },
+  "candidateSelector": {
+    "kind": "supabase-local"
+  },
+  "scenarioSelector": {
+    "scenarioId": "scn.verify-upgrade-local"
+  },
+  "stepSelector": {
+    "stepId": "step.sequence-next-use"
+  },
+  "observableSelector": "/sequenceNextUse",
+  "rule": {
+    "id": "rule.verify-upgrade-sequence-next-use",
+    "version": "1"
+  },
+  "expectedFailure": {
+    "predicate": {
+      "op": "and",
+      "clauses": [
+        {
+          "op": "eq",
+          "left": "/reference/advancesPastMigratedIds",
+          "right": { "literal": true }
+        },
+        {
+          "op": "eq",
+          "left": "/candidate/advancesPastMigratedIds",
+          "right": { "literal": false }
+        }
+      ]
+    }
+  },
+  "rationale": "Reproduced this sprint against real targets in packages/targets/test/integration/upgrade-local.test.ts. `@supabase/lite@0.9.0`'s local-upgrade data phase (Li()/mx() in dist/cli/index.js) only emits `SELECT setval(pg_get_serial_sequence(...))` for a column whose live introspection shows a `nextval(` default or a literal serial/bigserial type. When the upgrade SOURCE is a file-backed Supalite target (supalite-sqlite-postgres, driver=sqlite-postgres), the underlying SQLite introspection exposes neither — the deparse cache records the bigserial column as `isSerial:false, defaultValue:null` — so lite migrates the row ids (id 1..N) but leaves the destination sequence at its start value. The first post-upgrade `INSERT ... (label) VALUES (...)` on the Supabase-local destination then draws `nextval` = 1 and fails with `duplicate key value violates unique constraint`. A plain Supalite clone of the same source (baseline B) is unaffected: its next insert lands at N+1. UPGRADE.md's 'Sequence resets after all migrated user data has been inserted' holds for pglite/postgres sources but not for the file-backed sqlite/sqlite-postgres sources. `supadiff verify-upgrade` records this as check `sequence-next-use` = `divergence` (not a failure) and realigning the sequence is left to the operator (`SELECT setval(pg_get_serial_sequence('public.<table>','id'), (SELECT max(id) FROM public.<table>))`).",
+  "evidence": [
+    {
+      "kind": "note",
+      "value": "sequence-next-use check detail: B (Supalite clone) next insert advances past the migrated ids; C (after real `lite upgrade`) next insert fails with duplicate key / does not advance. Reproduced in packages/targets/test/integration/upgrade-local.test.ts."
+    },
+    {
+      "kind": "note",
+      "value": "Deparse cache for a bigserial column on driver=sqlite-postgres: {\"isSerial\":false,\"defaultValue\":null,\"pgTypeName\":\"int8\"} — lite's mx() sequence-reset predicate sees no serial default. docs/DIVERGENCES.md, docs/LIMITATIONS.md."
+    }
+  ],
+  "upstream": {
+    "url": "https://github.com/supabase-community/lite"
+  },
+  "verifiedAt": "2026-09-03T00:00:00.000Z",
+  "expiresAt": "2027-03-03T00:00:00.000Z",
+  "owner": "cesarmanzocode"
+}

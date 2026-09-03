@@ -1,0 +1,67 @@
+{
+  "format": "supadiff.known-divergence",
+  "formatVersion": "1.0",
+  "id": "div.supalite-signed-url-key-name",
+  "title": "Supalite 0.9.0 sign-URL response uses `signedUrl`, breaking redemption through the official client",
+  "status": "active",
+  "referenceSelector": {
+    "kind": "supabase-local"
+  },
+  "candidateSelector": {
+    "kind": "supalite-sqlite-postgres"
+  },
+  "scenarioSelector": {
+    "scenarioId": "scn.supalite-storage-smoke"
+  },
+  "stepSelector": {
+    "stepId": "step.redeem"
+  },
+  "observableSelector": "/bytesDigest",
+  "rule": {
+    "id": "rule.peer-storage-redeem-bytesdigest",
+    "version": "1"
+  },
+  "expectedFailure": {
+    "predicate": {
+      "op": "and",
+      "clauses": [
+        {
+          "op": "eq",
+          "left": "/candidate/status",
+          "right": {
+            "literal": 200
+          }
+        },
+        {
+          "op": "eq",
+          "left": "/reference/status",
+          "right": {
+            "literal": 200
+          }
+        },
+        {
+          "op": "neq",
+          "left": "/candidate/bytesDigest",
+          "right": "/reference/bytesDigest"
+        }
+      ]
+    }
+  },
+  "rationale": "Confirmed this sprint against BOTH real targets: supabase/storage-api v1.70.3 returns the JSON key `signedURL` (capital URL) from POST /storage/v1/object/sign/*, which is what @supabase/storage-js@2.97.0 reads to build createSignedUrl()'s returned URL, so redemption through the official client returns the real uploaded bytes (HTTP 200). @supabase/lite@0.9.0 returns `signedUrl` (lowercase) from the same endpoint; the client leaves its URL undefined and the scenario redeems `${baseUrl}/storage/v1undefined`, which Supalite serves as its admin-dashboard HTML with HTTP 200 \u2014 a successful-looking response carrying the wrong content. This is a genuine cross-target divergence at step.redeem /bytesDigest: identical inputs, both HTTP 200, different bytes. The same bug reproduces identically on supalite-pglite and supalite-postgres (see docs/TARGETS.md); a separate entry would be added if a scenario exercises those as the candidate.",
+  "evidence": [
+    {
+      "kind": "note",
+      "value": "Raw sign endpoint, supabase-local: {\"signedURL\":\"/object/sign/b1/f.txt?token=...\"} -> client redeems real bytes. Raw sign endpoint, Supalite 0.9.0: {\"signedUrl\":\"...\"} -> client URL undefined -> redeems admin HTML. Reproduced in packages/targets/test/integration/peer-storage-local.test.ts."
+    },
+    {
+      "kind": "note",
+      "value": "docs/DIVERGENCES.md; docs/LIMITATIONS.md 'The signedUrl/signedURL divergence'."
+    }
+  ],
+  "upstream": {
+    "url": "https://github.com/supabase/supabase"
+  },
+  "verifiedAt": "2026-09-03T00:00:00.000Z",
+  "expiresAt": "2027-03-03T00:00:00.000Z",
+  "owner": "cesarmanzocode"
+}

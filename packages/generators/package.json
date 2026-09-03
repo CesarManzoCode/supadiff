@@ -12,9 +12,15 @@
   "scripts": {
     "build": "tsc -b",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:live-smoke": "vitest run --config vitest.live-smoke.config.ts"
   },
   "dependencies": {
-    "@supadiff/spec": "workspace:*"
+    "@supadiff/spec": "workspace:*",
+    "fast-check": "4.9.0"
+  },
+  "devDependencies": {
+    "@supadiff/engine": "workspace:*",
+    "@supadiff/targets": "workspace:*"
   }
 }

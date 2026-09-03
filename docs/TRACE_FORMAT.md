@@ -33,9 +33,16 @@ StepSpec     { id, kind, phase, actor?, requires?, dependsOn?, input,
 
 `kind` is a member of the operation catalog (`packages/spec/src/operation/catalog.ts`).
 The catalog knows every operation ID listed in Architecture Contract §2.4;
-only 11 representative operations have a semantic projector and are
-exercised by fake-target fixtures in this delivery (see
-`docs/OBSERVABLE_CONTRACT.md`).
+19 representative operations have a semantic projector (see
+`docs/OBSERVABLE_CONTRACT.md`), exercised by fake-target fixtures for L0-L5
+and by a real `@supabase/lite@0.9.0` target for L6/L11's Data/Auth/RLS/
+Storage operations.
+
+A `ScenarioSpec` produced by `@supadiff/generators` (L12) is not a distinct
+format — it is an ordinary scenario satisfying exactly this schema, with
+`provenance.origin: "generated"` and `provenance.generatedBy` set; the
+engine does not know or care whether a scenario was authored or generated
+(§10).
 
 ## Operation ID casing
 

@@ -12,10 +12,14 @@
   "scripts": {
     "build": "tsc -b",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:integration": "vitest run --config vitest.integration.config.ts"
   },
   "dependencies": {
     "@supadiff/engine": "workspace:*",
-    "@supadiff/spec": "workspace:*"
+    "@supadiff/spec": "workspace:*",
+    "@supabase/lite": "0.9.0",
+    "@supabase/supabase-js": "2.97.0",
+    "postgres": "3.4.8"
   }
 }

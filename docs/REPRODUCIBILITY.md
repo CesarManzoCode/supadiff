@@ -57,11 +57,36 @@ See `docs/adr/0002-artifact-directory-format.md` for why artifacts are
 directory trees rather than ZIP files in this delivery, and
 `docs/TESTING.md` for the exact reproducibility test list.
 
+## Generation determinism (L12)
+
+`@supadiff/generators` hashes the scenario seed into `fast-check@4.9.0`'s
+numeric seed (`hashSeedToUint32`, FNV-1a) and indexes its deterministic
+sample sequence by ordinal position (`generation.path`, a plain array
+index — not `fast-check`'s internal shrink-path notation, since nothing is
+shrunk during generation). Two independent generator runs with the same
+`{seed, count}` produce byte-identical `ScenarioSpec`s, proven directly via
+`computeScenarioDigest` equality in `packages/generators/test/
+generation.test.ts`. `provenance.createdAt` is pinned to the Unix epoch
+rather than wall-clock time specifically because `computeScenarioDigest`
+hashes the whole canonical scenario, `provenance` included.
+
+## Reduction determinism (L10)
+
+`@supadiff/reducer`'s acceptance oracle compares reproduction signatures
+using a digest that explicitly excludes `scenarioDigest` itself (§9.3's
+own wording: "scenario digest OR reduced scenario digest"), since a
+reduction pass necessarily changes the scenario's steps and therefore its
+digest — the property being preserved is the _divergence signature_, not
+byte-identity with the original scenario. A 3x flake-check gates every
+reduction attempt before any step is removed.
+
 ## What is not yet reproducible
 
-- No real target (Supalite/Supabase) exists yet, so nothing about real
-  backend timing, container startup, or network behavior is characterized.
-- Generation/reduction (`fast-check`-based scenario generation, dependency-
-  safe reduction) are not implemented (L10, L12) — nothing here claims
-  reduced-repro reproducibility beyond the deterministic artifact property
-  above.
+- No hosted Supabase target exists (L13 — see `docs/LIMITATIONS.md`), so
+  nothing about its timing or network behavior is characterized. Real
+  Supalite (L6/L11) and real `supabase-local` (L7/L8/L11, a pinned
+  `supabase` CLI over Docker Compose) process-spawn, container-startup and
+  HTTP timing now happen for real — but this document makes no
+  timing-determinism claim about them;
+  only the properties above (canonicalization, artifact bytes, generation,
+  reduction) are asserted as deterministic.

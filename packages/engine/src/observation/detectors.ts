@@ -27,6 +27,10 @@ const DETECTORS: Array<{ name: string; pattern: RegExp }> = [
 const PURE_HEX = /^[0-9a-f]{16,}$/;
 const CONTENT_HASH_REF = /^sha256:[0-9a-f]{64}$/;
 const OPAQUE_HANDLE = /^(sec|cap|res)-[0-9a-f]{8,}$/;
+// Deterministic diagnostic run identifiers (`run-<scenario-id>-<revision>`, §2.10
+// `RawObservation.runId`) are constructed from the scenario's own public id/revision,
+// never from secret material — excluded like the other structured non-secret ids below.
+const RUN_ID_SHAPE = /^run-[a-z][a-z0-9._-]*-[^-]+$/;
 
 /**
  * High-entropy heuristic: long runs of mixed-case alphanumeric/symbols with no
@@ -37,7 +41,14 @@ const OPAQUE_HANDLE = /^(sec|cap|res)-[0-9a-f]{8,}$/;
  */
 function looksHighEntropy(s: string): boolean {
   if (s.length < 24) return false;
-  if (PURE_HEX.test(s) || CONTENT_HASH_REF.test(s) || OPAQUE_HANDLE.test(s)) return false;
+  if (
+    PURE_HEX.test(s) ||
+    CONTENT_HASH_REF.test(s) ||
+    OPAQUE_HANDLE.test(s) ||
+    RUN_ID_SHAPE.test(s)
+  ) {
+    return false;
+  }
   const unique = new Set(s).size;
   return unique >= 12 && /[0-9]/.test(s) && /[A-Za-z]/.test(s) && !/\s/.test(s);
 }

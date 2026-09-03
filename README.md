@@ -6,25 +6,60 @@ diff, a schema diff, an upstream-suite replacement, or a generic fuzzer.
 
 ## What is proven right now
 
-This repository currently implements **Implementation DAG layers L0-L5** of
-`docs/adr/../SupaDiff_Architecture_Contract.md`: the deterministic comparison
-core, proven end-to-end against controlled **fake targets** only.
+This repository implements Implementation DAG layers **L0-L12** of the
+Architecture Contract: the deterministic comparison core (L0-L5, proven
+against fake targets), a real Supalite target family (L6), a real
+`supabase-local` target driver + Supalite ↔ Supabase-local peer comparison
+(L7), Supalite → real `lite upgrade` → Supabase-local upgrade verification
+(L8, `supadiff verify-upgrade`), a dogfood fault lab and replay (L9), a state-aware reducer (L10), Storage peer
+comparison including Supalite ↔ Supabase-local (L11), and seeded scenario
+generation (L12). "Real" throughout this document means the exact-pinned
+`@supabase/lite@0.9.0` package and/or a real Supabase stack brought up by the
+pinned `supabase` CLI 2.116.0 over Docker — never a fake target.
 
 ```
 ScenarioSpec → validation → canonical ExecutionPlan
-             → deterministic execution on fake targets
+             → deterministic execution on fake, real Supalite, OR real
+               supabase-local (Docker) targets
              → raw observations → redaction → semantic observations
              → semantic comparison → divergence classification
              → deterministic artifact
-             → offline compare / inspect via CLI
+             → offline compare / inspect / replay / reduce / verify-upgrade
 ```
 
-**Real Supabase and Supalite target integration has not been implemented.**
-Nothing in this repository has been run against real Supabase, Supalite, or
-any hosted service. See `docs/LIMITATIONS.md` for the full list of what is
-not yet proven.
+**L13 (hosted target) and L14 (documentation/release evidence gate) are not
+implemented** — out of scope for this sprint. See `docs/LIMITATIONS.md` for
+the full, current list of what is and is not proven.
 
-## One real command
+## L7/L8: implemented on a real Docker host
+
+L7 and L8 were blocked in the original Claude Code Web sandbox purely because
+its egress proxy refused every Docker registry blob download (`docker pull
+hello-world` → 403). On a real Docker host (`docker pull hello-world` → PASS)
+they were implemented in full:
+
+- **`supabase-local` driver** (`packages/targets/src/supabase-local/`): a
+  full Supabase stack — Postgres + GoTrue + PostgREST + Storage API + Kong —
+  provisioned by the reproducibly pinned `supabase` CLI 2.116.0 over Docker
+  Compose. Pinning the CLI pins the image set. Same SPI shape as the Supalite
+  drivers, sharing the entire `@supabase/supabase-js@2.97.0` per-operation
+  dispatch with them.
+- **`supadiff verify-upgrade`** (`packages/targets/src/supabase-local/
+upgrade.ts`): mandatory dry-run, then the real Architecture Contract §12
+  transition — a file-backed `supalite-sqlite-postgres` project is cloned
+  into a retained **baseline B** and an **upgrade-source U**, then the real
+  `lite upgrade --target local` (`@supabase/lite@0.9.0`) migrates U into a
+  **fresh Supabase-local stack C**. Verifies: source workdir untouched,
+  baseline retained, row IDs + Auth logical subject preserved, deliberate
+  corruption detected, sessions _not_ preserved + the actor re-authenticates
+  for the same subject, RLS behavior lockstep B vs C. The serial-sequence
+  position is **not** carried by `lite upgrade` from a file-backed source
+  (registered divergence `div.lite-upgrade-local-sequence-not-reset`);
+  Storage preservation is unsupported and is **rejected before any mutation**
+  when required. The old Postgres 15→17 `pg_dump` helper is removed — it was
+  never §12.
+
+## One real command against a fake target
 
 ```bash
 corepack pnpm install --frozen-lockfile
@@ -43,6 +78,31 @@ This runs a two-step scenario (`auth.signUp` then `data.select`) against two
 scripted fake targets in lockstep, redacts and projects every observation,
 compares them under a real (if small) semantic rule policy, and writes a
 deterministic evidence bundle to `./supadiff-artifacts/<run-id>.supadiff/`.
+
+## Real commands against real targets
+
+```bash
+corepack pnpm install --frozen-lockfile
+
+# Real @supabase/lite@0.9.0 subprocesses, no Docker
+pnpm test:integration:supalite            # L6: all 4 Supalite backends
+pnpm test:generators && pnpm test:generated-smoke   # L12: generated scenarios + one live sample
+pnpm test:fault-lab:replay                # L9: dogfood fault lab + `supadiff replay`
+pnpm test:fault-lab:reduce                # L10: state-aware reducer
+
+# Real supabase-local stack (pinned `supabase` CLI 2.116.0 over Docker) — needs Docker
+pnpm test:integration:peer-data-auth-rls  # L7: Supalite <-> supabase-local (Data+Auth+RLS) + failure modes
+pnpm test:integration:upgrade-local       # L8: verify-upgrade, real Supalite -> lite upgrade -> supabase-local
+pnpm test:integration:peer-storage        # L11: Supalite x2 and Supalite <-> supabase-local Storage
+
+supadiff verify-upgrade             # L8 dry-run (prints the §12 workflow, mutates nothing)
+supadiff verify-upgrade --execute   # L8 real transition: Supalite -> lite upgrade -> supabase-local
+```
+
+Every one of these talks to a real target over real HTTP via the real
+`@supabase/supabase-js@2.97.0` client — none of it is scripted. See
+`docs/TESTING.md` for what each command proves and `docs/TARGETS.md` for the
+capability matrix and the `supabase-local` driver architecture.
 
 ## Artifact example
 
@@ -74,12 +134,14 @@ alternate accepted format alongside a ZIP — see `docs/REPRODUCIBILITY.md`).
 packages/
   spec/        canonical types, JSON Schemas, RFC 8785 canonicalization, operation catalog
   engine/      planning, lockstep execution, redaction, comparator, artifact assembly
-  targets/     concrete target drivers — placeholder, not implemented (L6+)
-  reducer/     state-aware reduction — placeholder, not implemented (L10)
-  generators/  scenario generation — placeholder, not implemented (L12)
-  cli/         supadiff CLI: run / compare / inspect
-scenarios/, policies/, divergences/   fixtures and registries
-test/fixtures/                        the L5 acceptance fixtures
+  targets/     concrete target drivers — real Supalite family (L6), real supabase-local (L7),
+               shared REST dispatch, Supalite -> lite upgrade -> supabase-local verification (L8)
+  reducer/     state-aware reduction (L10) — ddmin over the dependency graph, acceptance oracle
+  generators/  seeded scenario generation (L12) — fast-check adapter, Data+Auth+RLS domain model
+  cli/         supadiff CLI: run / compare / inspect / replay / reduce / verify-upgrade
+scenarios/deterministic/              canonical L6/L7/L11 scenario fixtures
+divergences/active/                   known-divergence registry (signedUrl/signedURL + the L8 lite-upgrade sequence entry)
+test/fixtures/, test/fault-lab/       the L0-L5 acceptance fixtures and the L9 dogfood fault lab
 docs/                                  see below
 ```
 
@@ -100,11 +162,20 @@ docs/                                  see below
 
 SupaDiff's README **does not** claim:
 
-- Supabase comparison works
-- Supalite comparison works
-- Upgrade verification works
-- Storage is verified
-- A reducer exists
-- A scenario generator exists
+- Real Supabase (hosted) comparison works (L13 — out of scope for this sprint;
+  `parseTargetSpec` still rejects `supabase-hosted`)
+- The full Architecture Contract §12 upgrade surface is covered — L8 runs the
+  real `lite upgrade --target local` transition (Supalite → Supabase-local)
+  and verifies row-ID + Auth-subject preservation, session non-preservation +
+  actor reauthentication, and RLS behavior lockstep. The serial-sequence
+  position is **not** carried by `lite upgrade` from a file-backed source
+  (registered divergence, not papered over); Storage byte preservation is
+  `unsupported` and is rejected before any mutation when required; hosted
+  (`--target hosted`) upgrades are not exercised
+- A generic fuzzing framework or generic database reducer exists — L10's
+  reducer and L12's generator are both scoped to SupaDiff's own domain model
+  (Data+Auth+RLS scenarios), not general-purpose tools
+- Realtime, Edge Functions, or a dashboard/UI are covered — never in scope
 
-All of the above are later Implementation DAG layers (L6-L14), not started.
+`docs/LIMITATIONS.md` is the authoritative, current list of what is and is
+not proven — read it before citing any result from this repository.

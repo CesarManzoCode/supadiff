@@ -1,0 +1,190 @@
+{
+  "format": "supadiff.scenario",
+  "formatVersion": "1.0",
+  "id": "scn.supalite-storage-smoke",
+  "revision": "1",
+  "title": "Storage peer comparison: bucket, upload/download byte-identity, list, copy, move, remove, signed URL",
+  "description": "L11 canonical Storage shape (owner actor creates a bucket, uploads a fixture object, reads it back by download AND by redeeming a signed URL, lists/copies/moves/removes it). Requires EXPERIMENTAL_STORAGE=1 (GT §2.6), declared at 'experimental' capability level on non-bare-sqlite Supalite backends -- capability preflight resolves the whole scenario to 'unsupported' on supalite-sqlite, never a false pass. The signed-URL redemption step is intentionally NOT gated by a scenario requirement: this sprint found and reproduced a real Supalite bug (its sign endpoint returns JSON key `signedUrl`, but the Supabase Storage API contract that the official supabase-js client parses expects `signedURL`, capital URL) that makes redemption via the official client return the wrong content with HTTP 200 rather than the uploaded bytes -- see docs/DIVERGENCES.md. The step still runs so the comparator can verify this broken behavior is at least identical and deterministic across backends, not silently skipped.",
+  "tags": ["l11", "acceptance", "supalite", "storage"],
+  "seed": "11",
+  "client": { "library": "supabase-js", "version": "2.97.0" },
+  "requirements": [
+    { "capability": "auth.password.signup", "range": "^1.0.0", "accept": ["exact"] },
+    {
+      "capability": "storage.bucket.create",
+      "range": "^1.0.0",
+      "accept": ["exact", "experimental"]
+    },
+    {
+      "capability": "storage.object.write",
+      "range": "^1.0.0",
+      "accept": ["exact", "experimental"]
+    },
+    { "capability": "storage.object.read", "range": "^1.0.0", "accept": ["exact", "experimental"] },
+    {
+      "capability": "storage.signed-url.create",
+      "range": "^1.0.0",
+      "accept": ["exact", "experimental"]
+    }
+  ],
+  "resources": [
+    {
+      "id": "schema.storage-marker",
+      "mediaType": "application/sql",
+      "sha256": "sha256:6f07ff19d49bda589e1795c2b98251ee4dc8ced751c760ed5a8693b6b4bd7ca8",
+      "length": 61,
+      "source": {
+        "kind": "inline",
+        "value": "create table public.storage_marker (\n  id int primary key\n);\n"
+      },
+      "sensitivity": "public-fixture"
+    },
+    {
+      "id": "fixture.blob",
+      "mediaType": "application/octet-stream",
+      "sha256": "sha256:b46767475bd42f4712aaca18032b28c72cc8c4c03b937783f9ab3e80936d153c",
+      "length": 164,
+      "source": {
+        "kind": "inline",
+        "value": "c3VwYWRpZmYgc3RvcmFnZSBwZWVyLWNvbXBhcmlzb24gZml4dHVyZSBieXRlcyAAAQIgZGV0ZXJtaW5pc3RpYyBwYXlsb2FkIGZvciBieXRlLWlkZW50aXR5IGNoZWNrcyBhY3Jvc3Mgc3VwYWxpdGUgYmFja2VuZHMu"
+      },
+      "sensitivity": "public-fixture"
+    }
+  ],
+  "actors": [
+    {
+      "id": "actor.owner",
+      "kind": "user",
+      "credentialSource": {
+        "kind": "generated",
+        "recipe": { "id": "fixture.password", "version": "1" }
+      },
+      "initialContext": "anonymous",
+      "sessionPolicy": "fresh-per-target"
+    }
+  ],
+  "steps": [
+    {
+      "id": "step.schema",
+      "kind": "schema.apply",
+      "phase": "bootstrap",
+      "input": { "resourceId": "schema.storage-marker", "mode": "authoritative" }
+    },
+    {
+      "id": "step.signup",
+      "kind": "auth.signUp",
+      "phase": "bootstrap",
+      "actor": "actor.owner",
+      "dependsOn": ["step.schema"],
+      "input": {
+        "email": "storage-owner@example.test",
+        "password": { "$secretRef": "fixture.password" }
+      }
+    },
+    {
+      "id": "step.create-bucket",
+      "kind": "storage.createBucket",
+      "phase": "exercise",
+      "actor": "actor.owner",
+      "dependsOn": ["step.signup"],
+      "input": { "bucket": "sd-fixtures", "public": false }
+    },
+    {
+      "id": "step.upload",
+      "kind": "storage.upload",
+      "phase": "exercise",
+      "actor": "actor.owner",
+      "dependsOn": ["step.create-bucket"],
+      "input": { "bucket": "sd-fixtures", "path": "owner/hello.bin", "resourceId": "fixture.blob" }
+    },
+    {
+      "id": "step.download",
+      "kind": "storage.download",
+      "phase": "exercise",
+      "actor": "actor.owner",
+      "dependsOn": ["step.upload"],
+      "input": { "bucket": "sd-fixtures", "path": "owner/hello.bin" }
+    },
+    {
+      "id": "step.list",
+      "kind": "storage.list",
+      "phase": "exercise",
+      "actor": "actor.owner",
+      "dependsOn": ["step.upload"],
+      "input": { "bucket": "sd-fixtures", "prefix": "owner" }
+    },
+    {
+      "id": "step.observe-owner",
+      "kind": "observe.storageObject",
+      "phase": "exercise",
+      "actor": "actor.owner",
+      "dependsOn": ["step.upload"],
+      "input": { "bucket": "sd-fixtures", "path": "owner/hello.bin" }
+    },
+    {
+      "id": "step.copy",
+      "kind": "storage.copy",
+      "phase": "exercise",
+      "actor": "actor.owner",
+      "dependsOn": ["step.upload"],
+      "input": { "bucket": "sd-fixtures", "from": "owner/hello.bin", "to": "owner/copy.bin" }
+    },
+    {
+      "id": "step.move",
+      "kind": "storage.move",
+      "phase": "exercise",
+      "actor": "actor.owner",
+      "dependsOn": ["step.copy"],
+      "input": { "bucket": "sd-fixtures", "from": "owner/copy.bin", "to": "owner/moved.bin" }
+    },
+    {
+      "id": "step.signed-url",
+      "kind": "storage.createSignedUrl",
+      "phase": "exercise",
+      "actor": "actor.owner",
+      "dependsOn": ["step.upload"],
+      "input": { "bucket": "sd-fixtures", "path": "owner/hello.bin", "expiresInSeconds": 120 },
+      "capture": [
+        {
+          "name": "signed-url-handle",
+          "from": { "kind": "json-pointer", "pointer": "/signedUrl" },
+          "valueType": "string",
+          "sensitivity": "secret",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "step.redeem",
+      "kind": "storage.redeemUrl",
+      "phase": "exercise",
+      "actor": "actor.owner",
+      "dependsOn": ["step.signed-url"],
+      "input": { "signedUrlHandle": { "$ref": "capture:signed-url-handle" } }
+    },
+    {
+      "id": "step.remove",
+      "kind": "storage.remove",
+      "phase": "exercise",
+      "actor": "actor.owner",
+      "dependsOn": ["step.move", "step.list", "step.observe-owner", "step.download", "step.redeem"],
+      "input": { "bucket": "sd-fixtures", "paths": ["owner/moved.bin"] }
+    }
+  ],
+  "cleanup": [],
+  "comparison": { "policyId": "policy.supalite-storage-smoke", "policyVersion": "1" },
+  "expectedOutcomes": [],
+  "limits": {
+    "maxSteps": 20,
+    "maxWallTimeMs": 60000,
+    "maxArtifactBytes": 10000000,
+    "maxRequestsPerTarget": 40,
+    "maxHostedCostUsd": 0,
+    "maxParallelOperations": 1
+  },
+  "provenance": {
+    "origin": "authored",
+    "createdAt": "2026-09-03T00:00:00.000Z",
+    "author": "supadiff-l11-sprint"
+  }
+}
