@@ -332,6 +332,23 @@ describe("L7 supabase-local failure-mode handling", () => {
     const result = await runScenario(scenario, [{ slot: "mismatch", spec, driver }]);
     expect(result.state).toBe("inconclusive");
     expect(result.plan, "no ExecutionPlan is frozen on an identity mismatch").toBeUndefined();
+
+    // The stack that provisioning brought up for `identify()` must still be torn down —
+    // an abnormal failure caught at plan-freeze reaches `session.teardown()` via the FSM's
+    // recovery path, it is never silently skipped (§4.2/§4.6). This test file runs alone,
+    // so no `sdsblocal*` container should remain.
+    const leftover = spawnManaged(
+      "bash",
+      ["-c", `docker ps -aq --filter "name=sdsblocal" | wc -l`],
+      {
+        cwd: process.cwd(),
+        env: process.env,
+      },
+    );
+    await leftover.waitForExit();
+    expect(leftover.stdout().trim(), "supabase-local stack leaked after identity mismatch").toBe(
+      "0",
+    );
   }, 180_000);
 
   it("target death: killing the container stack mid-run makes the engine finalize inconclusive (target-lost), not a false pass", async () => {
