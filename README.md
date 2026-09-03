@@ -6,25 +6,55 @@ diff, a schema diff, an upstream-suite replacement, or a generic fuzzer.
 
 ## What is proven right now
 
-This repository currently implements **Implementation DAG layers L0-L5** of
-`docs/adr/../SupaDiff_Architecture_Contract.md`: the deterministic comparison
-core, proven end-to-end against controlled **fake targets** only.
+This repository implements Implementation DAG layers **L0-L6, L9-L12** of
+the Architecture Contract: the deterministic comparison core (L0-L5, proven
+against fake targets), a real Supalite target family (L6), a dogfood fault
+lab and replay (L9), a state-aware reducer (L10), Storage peer comparison
+(L11), and seeded scenario generation (L12) — all exercised against the
+real, exact-pinned `@supabase/lite@0.9.0` package, never a fake target,
+wherever this document says "real."
 
 ```
 ScenarioSpec → validation → canonical ExecutionPlan
-             → deterministic execution on fake targets
+             → deterministic execution on fake OR real Supalite targets
              → raw observations → redaction → semantic observations
              → semantic comparison → divergence classification
              → deterministic artifact
-             → offline compare / inspect via CLI
+             → offline compare / inspect / replay / reduce via CLI
 ```
 
-**Real Supabase and Supalite target integration has not been implemented.**
-Nothing in this repository has been run against real Supabase, Supalite, or
-any hosted service. See `docs/LIMITATIONS.md` for the full list of what is
-not yet proven.
+**L7 (Supabase-local) and L8 (upgrade verification) are not implemented.**
+Both require running a real Docker container, and this environment's egress
+proxy returns `403 Forbidden` on the Docker registry's blob CDN for every
+image pull, including `hello-world` — confirmed, not assumed. See
+"Supabase-local: blocked" below and `docs/LIMITATIONS.md`.
 
-## One real command
+Nothing in this repository claims Supabase-local, hosted Supabase, or
+Supabase's own upgrade behavior has been observed. See `docs/LIMITATIONS.md`
+for the full, current list of what is and is not proven.
+
+## Supabase-local: blocked
+
+```
+$ docker pull hello-world
+Using default tag: latest
+latest: Pulling from library/hello-world
+failed to copy: httpReadSeeker: failed open: failed to do request: Get
+"https://production.cloudfront.docker.com/registry-v2/...": Forbidden
+```
+
+`docker ps` and registry auth/manifest endpoints work; only the blob-CDN
+download itself is refused by this sandbox's network policy. Every attempt
+to pull any image (including `alpine:3.20`) fails identically. This blocks
+L7 (a real `supabase-local` target, normally Docker Compose-provisioned)
+and L8 (Docker-based local upgrade verification) at the execution level —
+not a design gap, an environment one. `verify-upgrade` remains wired into
+the CLI and returns exit 30 ("not implemented"), same as before this
+sprint; no `supabase-local` driver was written, because writing one that
+has never actually run against the thing it claims to drive would be
+exactly the overclaiming this project exists to prevent.
+
+## One real command against a fake target
 
 ```bash
 corepack pnpm install --frozen-lockfile
@@ -43,6 +73,22 @@ This runs a two-step scenario (`auth.signUp` then `data.select`) against two
 scripted fake targets in lockstep, redacts and projects every observation,
 compares them under a real (if small) semantic rule policy, and writes a
 deterministic evidence bundle to `./supadiff-artifacts/<run-id>.supadiff/`.
+
+## One real command against a real target
+
+```bash
+corepack pnpm install --frozen-lockfile
+pnpm test:integration:supalite          # L6: real @supabase/lite@0.9.0, all 4 backends
+pnpm test:integration:peer-storage      # L11: real Storage peer comparison
+pnpm test:generators && pnpm test:generated-smoke   # L12: generated scenarios, one live sample
+pnpm test:fault-lab:replay              # L9: dogfood fault lab + `supadiff replay`
+pnpm test:fault-lab:reduce              # L10: state-aware reducer
+```
+
+Every one of these spawns a real `lite start` subprocess and talks to it
+over real HTTP via the real `@supabase/supabase-js@2.97.0` client — none of
+this is scripted. See `docs/TESTING.md` for what each command actually
+proves and `docs/TARGETS.md` for the per-backend capability matrix.
 
 ## Artifact example
 
@@ -74,12 +120,12 @@ alternate accepted format alongside a ZIP — see `docs/REPRODUCIBILITY.md`).
 packages/
   spec/        canonical types, JSON Schemas, RFC 8785 canonicalization, operation catalog
   engine/      planning, lockstep execution, redaction, comparator, artifact assembly
-  targets/     concrete target drivers — placeholder, not implemented (L6+)
-  reducer/     state-aware reduction — placeholder, not implemented (L10)
-  generators/  scenario generation — placeholder, not implemented (L12)
-  cli/         supadiff CLI: run / compare / inspect
-scenarios/, policies/, divergences/   fixtures and registries
-test/fixtures/                        the L5 acceptance fixtures
+  targets/     concrete target drivers — real Supalite family (L6); no supabase-local (L7, blocked)
+  reducer/     state-aware reduction (L10) — ddmin over the dependency graph, acceptance oracle
+  generators/  seeded scenario generation (L12) — fast-check adapter, Data+Auth+RLS domain model
+  cli/         supadiff CLI: run / compare / inspect / replay / reduce (verify-upgrade: not implemented)
+scenarios/deterministic/              canonical L6/L11 scenario fixtures
+test/fixtures/, test/fault-lab/       the L0-L5 acceptance fixtures and the L9 dogfood fault lab
 docs/                                  see below
 ```
 
@@ -100,11 +146,18 @@ docs/                                  see below
 
 SupaDiff's README **does not** claim:
 
-- Supabase comparison works
-- Supalite comparison works
-- Upgrade verification works
-- Storage is verified
-- A reducer exists
-- A scenario generator exists
+- Supabase-local comparison works (L7 — blocked by this environment's Docker
+  registry access, see above; no driver was written)
+- Supabase-local upgrade verification works (L8 — same blocker)
+- Real Supabase (hosted) comparison works (L13 — out of scope for this sprint)
+- Real Supalite ↔ Supabase-local Storage comparison works — L11's Storage
+  evidence is real Supalite-vs-Supalite (two independent backends), not
+  Supalite-vs-Supabase-local, because L7 is blocked; see `docs/DIVERGENCES.md`
+  for the one genuine, reproduced Supalite bug this sprint's testing found
+  along the way (a Storage signed-URL response field-name mismatch)
+- A generic fuzzing framework or generic database reducer exists — L10's
+  reducer and L12's generator are both scoped to SupaDiff's own domain model
+  (Data+Auth+RLS scenarios), not general-purpose tools
 
-All of the above are later Implementation DAG layers (L6-L14), not started.
+`docs/LIMITATIONS.md` is the authoritative, current list of what is and is
+not proven — read it before citing any result from this repository.

@@ -2,12 +2,18 @@
 
 ## What actually exists
 
-| Layer        | Package            | Test files | Tests   |
-| ------------ | ------------------ | ---------- | ------- |
-| L1 spec      | `@supadiff/spec`   | 5          | 35      |
-| L2-L5 engine | `@supadiff/engine` | 10         | 126     |
-| L5 CLI       | `supadiff` (cli)   | 4          | 24      |
-| **Total**    |                    | **19**     | **185** |
+| Layer                 | Location                                                      | Test files | Tests   | Real target?               |
+| --------------------- | ------------------------------------------------------------- | ---------- | ------- | -------------------------- |
+| L1 spec               | `@supadiff/spec`                                              | 5          | 35      | n/a                        |
+| L2-L5 engine          | `@supadiff/engine`                                            | 10         | 131     | fake only                  |
+| L5 CLI                | `supadiff` (cli)                                              | 4          | 24      | fake only                  |
+| L6 Supalite family    | `packages/targets/test/integration/supalite.test.ts`          | 1          | 8       | **real** `@supabase/lite`  |
+| L9 fault lab + replay | `test/fault-lab/fault-lab.test.ts`, `replay.test.ts`          | 2          | 18      | fake (deliberately, §15.2) |
+| L10 reducer           | `test/fault-lab/reduce.test.ts`                               | 1          | 2       | fake (deliberately, §15.2) |
+| L11 Storage peer      | `packages/targets/test/integration/storage.test.ts`           | 1          | 1       | **real**, two backends     |
+| L12 generators        | `packages/generators/test/generation.test.ts`                 | 1          | 6       | n/a (validation-only)      |
+| L12 generated smoke   | `packages/generators/test/live-smoke/generated-smoke.test.ts` | 1          | 1       | **real** `@supabase/lite`  |
+| **Total**             |                                                               | **26**     | **226** |                            |
 
 All numbers above are reproducible by running the commands below; they are
 not claimed from memory.
@@ -16,7 +22,7 @@ not claimed from memory.
 
 ```bash
 corepack pnpm install --frozen-lockfile
-pnpm check                                              # boundary + lint + typecheck + format + test
+pnpm check                                              # boundary + lint + build + typecheck + format + test (all L0-L5, L12 validation, no real targets)
 
 pnpm --filter @supadiff/spec test                        # L1
 pnpm --filter @supadiff/engine test -- execution          # L2
@@ -32,7 +38,22 @@ node packages/cli/dist/bin.js run test/fixtures/basic.json \
   --target test/fixtures/fake-match.json \
   --policy test/fixtures/basic-policy.json \
   --output json                                           # L5
+
+pnpm test:integration:supalite                            # L6 — real, ~1 min, spawns 4 real lite processes
+pnpm test:fault-lab:replay                                # L9 — dogfood fault lab + supadiff replay
+pnpm test:fault-lab:reduce                                # L10 — supadiff reduce
+pnpm test:integration:peer-storage                        # L11 — real, ~30s, two real Supalite backends
+pnpm test:generators                                      # L12 — byte-identical replay, preconditions, 10,000 validation-only generations (~1 min)
+pnpm test:generated-smoke                                 # L12 — 5 generated scenarios against a real Supalite target (~30s)
 ```
+
+`pnpm check` deliberately does **not** run L6/L9-L12's real-target or
+fault-lab suites — they spawn real subprocesses/npm installs and are
+excluded from the default gate via dedicated `vitest.integration.config.ts`/
+`vitest.live-smoke.config.ts` files and `test/integration/**`/
+`test/live-smoke/**` exclusions in each package's default `vitest.config.ts`,
+so routine work stays fast and hermetic. They are never silently skipped in
+CI either — see "Continuous integration" below.
 
 ## What each suite actually proves
 
@@ -79,32 +100,82 @@ artifact`, exact exit codes (0/10/20/30) under different `--fail-on`
   configurations, JSON-stdout purity (exactly one document), NDJSON event
   ordering, human stdout/stderr separation, and offline `compare` producing
   the same outcome as a live two-target `run` on identical fixtures.
+- **L6** (`packages/targets/test/integration/supalite.test.ts`): the same
+  ordinary scenario runs to completion on all four `supalite-*` target
+  kinds against the real published `@supabase/lite@0.9.0` package — real
+  process spawn, real HTTP, real `@supabase/supabase-js@2.97.0` client;
+  owner-scoped RLS proven on the three RLS-capable backends; the bare
+  `sqlite` backend's Auth/RLS gap proven to resolve `unsupported` (never a
+  false pass or false failure) rather than being special-cased around.
+- **L9** (`test/fault-lab/`): all six deliberately incompatible fault
+  classes (§15.5: RLS leak, partial write, RETURNING leak, Auth subject
+  swap, Storage owner loss, normalization trap) proven caught as
+  `new-divergence`, and every benign counterpart proven not misclassified;
+  `supadiff replay` rebuilds a comparison from a stored recipe and
+  reproduces the identical classification.
+- **L10** (`test/fault-lab/reduce.test.ts`): a multi-step scenario with
+  provably prunable "noise" steps shrinks to the minimal reproducing set
+  via `supadiff reduce`'s dependency-graph-aware ddmin pass; a flaky
+  reproduction (fails the 3x pre-reduction stability check) is refused
+  rather than reduced.
+- **L11** (`packages/targets/test/integration/storage.test.ts`): bucket
+  creation, upload/download/copy byte-identity (real SHA-256 of real
+  bytes, not metadata), list, remove, move, ownership (`observe.
+storageObject`), and signed-URL creation/redemption compared for real
+  between two independently provisioned real Supalite backends — every
+  declared observable path resolves with zero `inconclusive`/
+  `new-divergence` outcomes, and the discovered signedUrl/signedURL bug
+  (`docs/DIVERGENCES.md`) is asserted directly against raw evidence, not
+  hidden by a passing comparator.
+- **L12** (`packages/generators/test/`): two independent generator runs
+  with the same `{seed, count}` produce byte-identical canonical scenarios
+  (`computeScenarioDigest` equality); a structural sweep over 200 generated
+  scenarios proves no `data.update`/`data.delete` step ever targets a table
+  without a prior tracked insert, and that the model's precondition check
+  actually rejects at least one raw draw (not vacuously true); 10,000
+  generations across 100 seeds all parse and canonicalize without
+  throwing; 5 generated scenarios run to completion against a real
+  `supalite-sqlite-postgres` target.
 
 ## Continuous integration
 
 `.github/workflows/ci.yml` runs `pnpm install --frozen-lockfile` then
 `pnpm check` on Node 22 with Corepack pinned to the exact `packageManager`
 version in the root `package.json`, on every pull request targeting `main`
-and every push to `main`. One job, no matrix, no secrets; superseded runs on
-the same ref are cancelled via `concurrency`.
+and every push to `main` — the safe, local, no-credentials gate. A second
+job, `real-targets`, runs `pnpm test:integration:supalite`,
+`pnpm test:fault-lab:replay`, `pnpm test:fault-lab:reduce`,
+`pnpm test:integration:peer-storage`, `pnpm test:generators`, and
+`pnpm test:generated-smoke` — still no hosted credentials, no Cartesian
+target matrix, nothing Docker-dependent (L7/L8 are not implemented; see
+`docs/LIMITATIONS.md`). Both jobs use `concurrency` to cancel superseded
+runs on the same ref.
 
 ## Honesty gates actually enforced
 
 - Boundary checker (`scripts/boundary-check.mjs`) fails the build on any
-  forbidden cross-package import — verified by a self-test in this session
-  (a deliberately introduced violation was caught, then reverted).
-- `pnpm check` runs boundary check, lint, typecheck, format check, and every
-  package's tests in one command; it is the acceptance gate for this
-  delivery and passes cleanly as committed.
-- No test in this repository claims conformance with real Supabase or
-  Supalite. `FakeTargetDriver` is explicitly test infrastructure (§15.2)
-  and every doc in `docs/` that mentions it says so.
+  forbidden cross-package import — verified by a self-test in an earlier
+  session (a deliberately introduced violation was caught, then reverted).
+- An ESLint `no-restricted-imports` rule fails the build if `fast-check` is
+  imported anywhere outside `packages/generators/src/model/arbitraries.ts`
+  (§10.1) — a real, mechanically enforced boundary, not just a comment.
+- `pnpm check` runs boundary check, lint, build, typecheck, format check,
+  and every package's default (fake-target/validation-only) tests in one
+  command; it is the safe/local acceptance gate and passes cleanly as
+  committed. The real-target suites above are a separate, explicit gate —
+  never silently folded into `pnpm check` and never silently skipped.
+- No test in this repository claims conformance with real Supabase-local,
+  Supabase-hosted, or Supabase's own upgrade behavior (L7/L8/L13 are not
+  implemented). `FakeTargetDriver` is explicitly test infrastructure
+  (§15.2) and every doc in `docs/` that mentions it says so; every L6/L11/
+  L12-live-smoke test file says, in its own comments, exactly which real
+  package version it is driving and why.
 
 ## Explicitly not built in this delivery
 
-- Dogfood fault lab (§15.5's six deliberately incompatible service
-  variants) — depends on L7 (a real peer target) per the Implementation DAG;
-  not attempted.
-- Driver contract test suite (§15.1 item 5) — no concrete driver exists.
-- Property-based/generated test corpora — `fast-check` is deliberately not a
-  dependency yet (§10.1, C-001).
+- `supabase-local`/`supabase-hosted` drivers, and everything depending on
+  them (L7, L8, L13) — see `docs/LIMITATIONS.md` for the precise blocker.
+- Driver contract test suite generalized across arbitrary future drivers
+  (§15.1 item 5) — only the Supalite family's own contract is exercised.
+- Realtime, Edge Functions, a dashboard/UI, a generic fuzzing framework, or
+  a generic database reducer — never in scope (Architecture Contract §20).

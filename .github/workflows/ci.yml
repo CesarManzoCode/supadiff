@@ -37,3 +37,59 @@ jobs:
 
       - name: Run checks (boundary-check, lint, build, typecheck, format, test)
         run: pnpm check
+
+  real-targets:
+    name: real targets (node 22, pnpm 9.15.0)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: supadiff
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      SUPADIFF_TEST_POSTGRES_ADMIN_URL: postgresql://postgres:supadiff@127.0.0.1:5432/postgres
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Prepare pinned pnpm (packageManager field)
+        run: corepack prepare pnpm@9.15.0 --activate
+
+      - name: Install dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      # Real @supabase/lite@0.9.0 processes and real supabase-js traffic — no
+      # hosted credentials, no Docker (L7/L8's supabase-local remains
+      # unimplemented; see docs/LIMITATIONS.md), no Cartesian target matrix.
+      - name: L6 — Supalite target family (all 4 backends)
+        run: pnpm test:integration:supalite
+
+      - name: L9 — fault lab + replay
+        run: pnpm test:fault-lab:replay
+
+      - name: L10 — reducer
+        run: pnpm test:fault-lab:reduce
+
+      - name: L11 — Storage peer comparison
+        run: pnpm test:integration:peer-storage
+
+      - name: L12 — generators (byte-identical replay, preconditions, 10,000 validation-only generations)
+        run: pnpm test:generators
+
+      - name: L12 — generated smoke (live sample against a real Supalite target)
+        run: pnpm test:generated-smoke

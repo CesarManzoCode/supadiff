@@ -1,8 +1,10 @@
 # Architecture
 
-This document summarizes what is actually implemented (L0-L5) and how it maps
-to the Architecture Contract. It does not restate the contract; see the
-contract itself for the normative design.
+This document summarizes what is actually implemented (L0-L6, L9-L12) and
+how it maps to the Architecture Contract. It does not restate the
+contract; see the contract itself for the normative design. L7 (Supabase-
+local) and L8 (upgrade verification) are not implemented — see
+`docs/LIMITATIONS.md` for the precise, environment-level reason.
 
 ## Thesis
 
@@ -12,28 +14,31 @@ observable behaviors satisfy the same application contract?
 
 ## Components implemented
 
-| Component                                         | Package                               | Status                                                                                                                                                  |
-| ------------------------------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ScenarioSpec` parse/validate/canonicalize/digest | `@supadiff/spec`                      | Implemented                                                                                                                                             |
-| Operation catalog (§2.4)                          | `@supadiff/spec`                      | Implemented, all IDs known; fake fixtures for 11 representative ops                                                                                     |
-| Declarative TS builder                            | `@supadiff/spec`                      | Implemented (pure data constructors, no callbacks)                                                                                                      |
-| Target SPI (`TargetDriver`/`TargetSession`)       | `@supadiff/engine/spi`                | Implemented                                                                                                                                             |
-| Capability preflight/probe/resolution             | `@supadiff/engine`                    | Implemented                                                                                                                                             |
-| `ExecutionPlan` (frozen, §2.3)                    | `@supadiff/spec` + `@supadiff/engine` | Implemented: built once after runtime capability probing via `buildExecutionPlan`, deterministic content (aside from `createdAt`), no secrets/endpoints |
-| Target lifecycle state machine                    | `@supadiff/engine`                    | Implemented, illegal transitions rejected                                                                                                               |
-| Lockstep scheduler                                | `@supadiff/engine`                    | Implemented                                                                                                                                             |
-| SecretVault / CapturedValueStore                  | `@supadiff/engine`                    | Implemented                                                                                                                                             |
-| Recovery journal                                  | `@supadiff/engine`                    | Implemented (write-before-allocate, tombstone-on-teardown)                                                                                              |
-| Redaction (typed + structural)                    | `@supadiff/engine`                    | Implemented for the secret classes and operations exercised in L0-L5                                                                                    |
-| Semantic projectors                               | `@supadiff/engine`                    | Implemented for 11 representative operations                                                                                                            |
-| Comparator (rule algebra)                         | `@supadiff/engine`                    | Implemented, all 13 `RuleExpression` kinds                                                                                                              |
-| Known-divergence registry                         | `@supadiff/spec` + `@supadiff/engine` | Implemented: schema, expiry, overlap detection                                                                                                          |
-| Artifact bundle assembly                          | `@supadiff/engine`                    | Implemented as a deterministic directory tree                                                                                                           |
-| CLI `run`/`compare`/`inspect`                     | `supadiff` (cli)                      | Implemented                                                                                                                                             |
-| `FakeTargetDriver`                                | `@supadiff/engine`                    | Implemented, test infrastructure only (§15.2)                                                                                                           |
-| Concrete Supalite/Supabase drivers                | `@supadiff/targets`                   | **Not implemented** (L6+)                                                                                                                               |
-| Reducer                                           | `@supadiff/reducer`                   | **Not implemented** (L10)                                                                                                                               |
-| Generators                                        | `@supadiff/generators`                | **Not implemented** (L12)                                                                                                                               |
+| Component                                         | Package                                 | Status                                                                                                                                                  |
+| ------------------------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ScenarioSpec` parse/validate/canonicalize/digest | `@supadiff/spec`                        | Implemented                                                                                                                                             |
+| Operation catalog (§2.4)                          | `@supadiff/spec`                        | Implemented, all IDs known; 19 representative ops have a semantic projector (11 original + 8 for L11 Storage)                                           |
+| Declarative TS builder                            | `@supadiff/spec`                        | Implemented (pure data constructors, no callbacks)                                                                                                      |
+| Target SPI (`TargetDriver`/`TargetSession`)       | `@supadiff/engine/spi`                  | Implemented                                                                                                                                             |
+| Capability preflight/probe/resolution             | `@supadiff/engine`                      | Implemented                                                                                                                                             |
+| `ExecutionPlan` (frozen, §2.3)                    | `@supadiff/spec` + `@supadiff/engine`   | Implemented: built once after runtime capability probing via `buildExecutionPlan`, deterministic content (aside from `createdAt`), no secrets/endpoints |
+| Target lifecycle state machine                    | `@supadiff/engine`                      | Implemented, illegal transitions rejected                                                                                                               |
+| Lockstep scheduler                                | `@supadiff/engine`                      | Implemented                                                                                                                                             |
+| SecretVault / CapturedValueStore                  | `@supadiff/engine`                      | Implemented                                                                                                                                             |
+| Recovery journal                                  | `@supadiff/engine`                      | Implemented (write-before-allocate, tombstone-on-teardown)                                                                                              |
+| Redaction (typed + structural)                    | `@supadiff/engine`                      | Implemented for the secret classes and operations exercised in L0-L5                                                                                    |
+| Semantic projectors                               | `@supadiff/engine`                      | Implemented for 19 representative operations                                                                                                            |
+| Comparator (rule algebra)                         | `@supadiff/engine`                      | Implemented, all 13 `RuleExpression` kinds                                                                                                              |
+| Known-divergence registry                         | `@supadiff/spec` + `@supadiff/engine`   | Implemented: schema, expiry, overlap detection                                                                                                          |
+| Artifact bundle assembly                          | `@supadiff/engine`                      | Implemented as a deterministic directory tree                                                                                                           |
+| CLI `run`/`compare`/`inspect`/`replay`/`reduce`   | `supadiff` (cli)                        | Implemented; `verify-upgrade` still returns exit 30 (not implemented)                                                                                   |
+| `FakeTargetDriver`                                | `@supadiff/engine`                      | Implemented, test infrastructure only (§15.2), also backs the L9 dogfood fault lab                                                                      |
+| Concrete Supalite drivers (4 backends)            | `@supadiff/targets`                     | Implemented, real `@supabase/lite@0.9.0` (L6)                                                                                                           |
+| `supabase-local`/`supabase-hosted` drivers        | `@supadiff/targets`                     | **Not implemented** — L7 blocked by this environment's Docker access; L13 out of scope (`docs/LIMITATIONS.md`)                                          |
+| Fault lab + `replay`                              | `test/fault-lab/`, `supadiff` (cli)     | Implemented (L9)                                                                                                                                        |
+| Reducer + `reduce`                                | `@supadiff/reducer`, `supadiff` (cli)   | Implemented: dependency graph, ddmin, 3x flake gate, signature-identity oracle excluding `scenarioDigest` (L10)                                         |
+| Storage peer comparison                           | `@supadiff/targets`, `@supadiff/engine` | Implemented: 8 new operations/projectors, real byte-identity across two Supalite backends (L11)                                                         |
+| Generators                                        | `@supadiff/generators`                  | Implemented: `fast-check@4.9.0` adapter isolated to one module, Data+Auth+RLS domain model (L12)                                                        |
 
 ## Package boundaries
 
@@ -46,7 +51,9 @@ Enforced mechanically by `scripts/boundary-check.mjs` (run as part of
   (never `@supadiff/engine`'s main entrypoint — that would reach comparison
   and scheduling internals).
 - `@supadiff/reducer` imports `@supadiff/spec` and `@supadiff/engine`.
-- `@supadiff/generators` imports only `@supadiff/spec`.
+- `@supadiff/generators` imports only `@supadiff/spec` and the pinned
+  property adapter (`fast-check@4.9.0`), isolated to one module
+  (`src/model/arbitraries.ts`) by an ESLint `no-restricted-imports` rule.
 - `supadiff` (CLI) may import all of the above.
 
 ## Execution flow (as implemented)

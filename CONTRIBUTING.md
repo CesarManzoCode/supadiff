@@ -1,8 +1,10 @@
 # Contributing
 
-This repository implements Implementation DAG layers L0-L5 of the
-Architecture Contract. Read `docs/LIMITATIONS.md` before assuming any
-capability beyond what it lists.
+This repository implements Implementation DAG layers L0-L6 and L9-L12 of
+the Architecture Contract. L7 (Supabase-local) and L8 (upgrade
+verification) are not implemented — blocked in this environment by Docker
+registry access, not by design; L13/L14 were out of scope. Read
+`docs/LIMITATIONS.md` before assuming any capability beyond what it lists.
 
 ## Before changing anything
 
@@ -52,13 +54,24 @@ One JSON file per entry under `divergences/active/`, validated by
 `docs/DIVERGENCES.md` for the matching semantics this delivery actually
 implements (selector-exact, not yet predicate-evaluated).
 
-## Adding a target driver (L6+, not started in this delivery)
+## Adding a target driver
 
-Out of scope for the current layer. When it begins: implement
-`TargetDriver`/`TargetSession` (`@supadiff/engine/spi`) in
+The Supalite family (`packages/targets/src/supalite/`) is the worked
+example: `TargetDriver`/`TargetSession` (`@supadiff/engine/spi`) in
 `@supadiff/targets`, importing only the `spi` entrypoint — never
 `@supadiff/engine`'s main entrypoint. The boundary checker
-(`scripts/boundary-check.mjs`) will reject the wrong import.
+(`scripts/boundary-check.mjs`) will reject the wrong import. A
+`supabase-local` driver would follow the same shape (Docker Compose-
+provisioned instead of `lite start`-provisioned) — not started in this
+sprint because this environment cannot run Docker (see
+`docs/LIMITATIONS.md`), not because the design is undecided.
+
+Never write driver code for a target you cannot actually run and verify in
+this environment. A driver that has never executed against the real thing
+it claims to drive is not evidence of anything, and claiming a layer
+complete on the strength of unexecuted code is exactly the overclaiming
+this project exists to prevent. Precisely document the blocker instead
+(`docs/LIMITATIONS.md`) and continue with other, unblocked work.
 
 ## Required evidence for any change
 

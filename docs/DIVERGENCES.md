@@ -55,6 +55,34 @@ outcomes:
   rather than silently falling through to a plain new-divergence with no
   trace that a now-expired entry once covered this failure.
 
+## A real finding this sprint did not register as a `KnownDivergence` entry
+
+L11's Storage testing found and reproduced a real bug: `@supabase/lite@
+0.9.0`'s sign-URL endpoint returns JSON key `signedUrl`, but the real
+Supabase Storage API contract — and the official `@supabase/storage-js`
+client bundled in `supabase-js` — reads `signedURL`. See
+`docs/LIMITATIONS.md` ("The signedUrl/signedURL divergence") for the full
+reproduction, and `storage.signed-url.redeem` in `packages/targets/src/
+supalite/capabilities.ts` for the capability-level record.
+
+This is **not** entered here as a `KnownDivergence` JSON file, deliberately:
+a `KnownDivergence` entry excuses a specific, already-classified
+**cross-target** `new-divergence` — a real discrepancy between a reference
+and a candidate target's observed behavior on the same comparison. This bug
+is not that. It is the same Supalite server behaving identically broken on
+both sides of the only real peer comparison this sprint could run
+(`supalite-sqlite-postgres` vs. `supalite-pglite` — Supabase-local, the
+literal reference this bug is really a divergence _against_, is blocked by
+this environment's Docker access; see `docs/LIMITATIONS.md`). SupaDiff's
+comparator correctly reports it as `match-exact` (both sides agree), not
+`new-divergence` — there is nothing to excuse in this system's own terms
+until a working Supabase-local peer exists to actually surface the
+discrepancy. Registering a `KnownDivergence` entry with a `supabase-local`
+`referenceSelector` today would assert a match against a target this sprint
+never ran, which is exactly the kind of unverifiable claim this document's
+matching semantics exist to prevent. Once L7 unblocks, this bug is the
+first real candidate for a genuine `KnownDivergence` entry.
+
 ## Directory convention
 
 `divergences/active/*.json` — loaded by the CLI (`--divergences <dir>`,

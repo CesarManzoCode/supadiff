@@ -28,10 +28,18 @@ Secret bytes live only in `InMemorySecretVault`, addressed by opaque
 handles, and are wiped (`destroy()`) at the end of `runScenario`. Only
 driver-internal dispatch code calls `vault.reveal()`.
 
-**Not yet implemented against real backends** (no OTP/recovery-code flow,
-client-secret/JWT-secret/DB-password config redaction, or hosted-project-
-identifier aliasing exist yet, because none of those flows exist without a
-real Supabase/Supalite target — see `docs/LIMITATIONS.md`).
+Password, JWT-access-token, refresh-token, and signed-URL redaction are now
+also exercised against a real target: L6/L11's integration tests run real
+`auth.signUp`/`storage.createSignedUrl` calls against a real
+`@supabase/lite@0.9.0` server, and the redaction pipeline above (not a fake-
+target substitute) processes every real response.
+
+**Still not implemented against any real backend** (no OTP/recovery-code
+flow, client-secret/JWT-secret/DB-password config redaction, or hosted-
+project-identifier aliasing exist yet, because none of those flows exist
+without either a hosted target (L13, out of scope this sprint) or
+Supabase-local (L7, blocked by this environment's Docker access — see
+`docs/LIMITATIONS.md`).
 
 ## Structural secret detector (secondary defense)
 
@@ -68,9 +76,12 @@ Recovery-journal entries carry only `resourceType`, `nonSecretIdentifier`
 and `cleanupAction` — never a credential. Tested directly in the secret
 corpus suite.
 
-## What is out of scope for L0-L5
+## What remains out of scope
 
 - Hosted safety flags (`--allow-hosted*`) are parsed but not enforced
-  against anything real, because no hosted driver exists.
-- No real HTTP transport exists, so header/query-string redaction is only
-  exercised against fake-target fixtures, not a live client.
+  against anything real, because no hosted driver exists (L13).
+- Real HTTP transport exists for the Supalite family (L6/L11), so header/
+  query-string redaction is exercised there for real, not only against
+  fake-target fixtures — but never against Supabase-local or hosted
+  Supabase, since neither has a driver (L7/L8/L13; see
+  `docs/LIMITATIONS.md`).
