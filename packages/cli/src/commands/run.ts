@@ -150,7 +150,7 @@ export async function runCommand(args: ParsedArgs): Promise<number> {
   const handles: TargetHandle[] = targetSpecs.map((spec) => ({ slot: spec.id, spec, driver }));
 
   progress(args.flags.output, args.flags.quiet, `provisioning ${handles.length} target(s)...`);
-  const result = await runScenario(scenario, handles);
+  const result = await runScenario(scenario, handles, { policy });
   progress(args.flags.output, args.flags.quiet, `run finished with state "${result.state}"`);
 
   const bundleTargets: BundleTargetRun[] = targetSpecs.map((spec) => {

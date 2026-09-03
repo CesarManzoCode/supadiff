@@ -30,4 +30,6 @@ export * from "./divergence/validate.js";
 
 export * from "./observation/types.js";
 
+export * from "./execution/types.js";
+
 export * from "./artifact/types.js";

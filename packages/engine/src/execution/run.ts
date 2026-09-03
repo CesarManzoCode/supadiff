@@ -3,6 +3,8 @@ import {
   validateOperationInput,
   type ActorSpec,
   type CleanupSpec,
+  type ComparisonPolicy,
+  type ExecutionPlan,
   type IsoDateTime,
   type JsonObject,
   type ScenarioSpec,
@@ -14,6 +16,7 @@ import {
   type TargetSpec,
 } from "@supadiff/spec";
 import { getOperationDefinition } from "@supadiff/spec";
+import { buildExecutionPlan, TargetIdentityMismatchError } from "../planning/build-plan.js";
 import type {
   ActorBinding,
   RawOperationResult,
@@ -81,6 +84,13 @@ export interface MultiTargetRunResult {
   state: RunTerminalState;
   targets: Map<StableId, TargetRunResult>;
   capturedValueStore: CapturedValueStore;
+  /**
+   * The frozen `ExecutionPlan` (§2.3, §5.1), present whenever every target reached
+   * runtime-capability-probed with a real observed identity and no identity mismatch was
+   * found. Absent for `invalid`/`unsupported` runs that never reached that point, and for
+   * an `inconclusive` run caused specifically by a target identity mismatch (§2.7).
+   */
+  plan?: ExecutionPlan;
 }
 
 export interface RunOptions {
@@ -88,6 +98,13 @@ export interface RunOptions {
   signal?: AbortSignal;
   /** Author-configured secret literals scanned for by the structural detector (§6.4). */
   configuredSecretLiterals?: string[];
+  /**
+   * The comparison policy to freeze into the `ExecutionPlan`'s `policyDigest` (§2.3). When
+   * omitted, a policy identified by the scenario's own declared `comparison` ref but with
+   * zero rules is used ONLY for plan digesting — this never substitutes for a real
+   * comparison policy at the CLI layer (see `loadPolicy`'s fail-closed contract).
+   */
+  policy?: ComparisonPolicy;
 }
 
 function defaultClock(): () => IsoDateTime {
@@ -97,6 +114,17 @@ function defaultClock(): () => IsoDateTime {
 
 class TargetLostError extends Error {}
 class OperationTimeoutError extends Error {}
+
+/** A zero-rules policy used only to digest a plan when no real policy was supplied (single-target runs). */
+function emptyPolicyForDigest(scenario: ScenarioSpec): ComparisonPolicy {
+  return {
+    format: "supadiff.comparison-policy",
+    formatVersion: "1.0",
+    policyId: scenario.comparison.policyId,
+    policyVersion: scenario.comparison.policyVersion,
+    rules: [],
+  };
+}
 
 /**
  * Runs one scenario in serial lockstep across N target slots (§5.2): step 1 on slot 0,
@@ -138,6 +166,7 @@ export async function runScenario(
   >();
 
   const capturedValueStore = new CapturedValueStore();
+  let plan: ExecutionPlan | undefined;
 
   for (const handle of targets) {
     perTarget.set(handle.slot, {
@@ -240,6 +269,36 @@ export async function runScenario(
     if (scenarioUnsupported) {
       await teardownAll("failure");
       return finalize("unsupported");
+    }
+
+    // --- plan-frozen (§2.3, §5.1): the ExecutionPlan is built exactly once here, after
+    // scenario validation, capability declaration, provisioning, target identification, and
+    // runtime capability probing all completed for every target (buildExecutionPlan itself
+    // enforces this by requiring each target's real observed identity). From this point
+    // onward the engine consumes the frozen plan as input; it never re-decides target
+    // identity or capability resolution.
+    const targetSlots = [...perTarget.values()];
+    try {
+      plan = buildExecutionPlan({
+        scenario,
+        policy: opts.policy ?? emptyPolicyForDigest(scenario),
+        mode: "peer",
+        targets: targetSlots.map((ctx, i) => ({
+          slot: ctx.handle.slot,
+          spec: ctx.handle.spec,
+          role: i === 0 ? "reference" : "candidate",
+          identity: ctx.identity,
+          capabilityResolution: ctx.capabilityResolution,
+        })),
+        maxParallelOperations: scenario.limits.maxParallelOperations,
+        now: clock,
+      });
+    } catch (err) {
+      if (err instanceof TargetIdentityMismatchError) {
+        await teardownAll("failure");
+        return finalize("inconclusive");
+      }
+      throw err;
     }
 
     // --- plan-frozen / actors-opened ---
@@ -637,7 +696,7 @@ export async function runScenario(
       });
       ctx.vault.destroy();
     }
-    return { runId, state, targets: targetResults, capturedValueStore };
+    return { runId, state, targets: targetResults, capturedValueStore, ...(plan ? { plan } : {}) };
   }
 }
 
