@@ -9,6 +9,9 @@
   "bin": {
     "supadiff": "./dist/bin.js"
   },
+  "exports": {
+    ".": "./dist/index.js"
+  },
   "scripts": {
     "build": "tsc -b",
     "typecheck": "tsc --noEmit -p tsconfig.json",

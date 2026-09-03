@@ -19,6 +19,11 @@
     "test:secret-corpus": "pnpm --filter @supadiff/engine test -- secret-corpus",
     "test:comparison-honesty": "pnpm --filter @supadiff/engine test -- comparison-honesty",
     "test:integration:supalite": "pnpm --filter @supadiff/targets test:integration",
+    "test:fault-lab:replay": "vitest run --config vitest.root.config.ts test/fault-lab/fault-lab.test.ts test/fault-lab/replay.test.ts",
+    "test:fault-lab:reduce": "vitest run --config vitest.root.config.ts test/fault-lab/reduce.test.ts",
+    "test:integration:peer-storage": "pnpm --filter @supadiff/targets test:integration -- --config vitest.integration.config.ts test/integration/storage.test.ts",
+    "test:generators": "pnpm --filter @supadiff/generators test",
+    "test:generated-smoke": "pnpm --filter @supadiff/generators test:live-smoke",
     "supadiff": "node packages/cli/dist/bin.js"
   },
   "devDependencies": {
@@ -29,6 +34,12 @@
     "prettier": "3.4.2",
     "typescript": "5.7.2",
     "typescript-eslint": "8.18.1",
-    "vitest": "2.1.8"
+    "vitest": "2.1.8",
+    "@supadiff/spec": "workspace:*",
+    "@supadiff/engine": "workspace:*",
+    "@supadiff/targets": "workspace:*",
+    "@supadiff/reducer": "workspace:*",
+    "@supadiff/generators": "workspace:*",
+    "supadiff": "workspace:*"
   }
 }

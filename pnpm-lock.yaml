@@ -11,6 +11,21 @@ importers:
       '@eslint/js':
         specifier: 9.15.0
         version: 9.15.0
+      '@supadiff/engine':
+        specifier: workspace:*
+        version: link:packages/engine
+      '@supadiff/generators':
+        specifier: workspace:*
+        version: link:packages/generators
+      '@supadiff/reducer':
+        specifier: workspace:*
+        version: link:packages/reducer
+      '@supadiff/spec':
+        specifier: workspace:*
+        version: link:packages/spec
+      '@supadiff/targets':
+        specifier: workspace:*
+        version: link:packages/targets
       '@types/node':
         specifier: 22.10.2
         version: 22.10.2
@@ -23,6 +38,9 @@ importers:
       prettier:
         specifier: 3.4.2
         version: 3.4.2
+      supadiff:
+        specifier: workspace:*
+        version: link:packages/cli
       typescript:
         specifier: 5.7.2
         version: 5.7.2

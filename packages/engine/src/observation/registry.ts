@@ -17,6 +17,7 @@ import {
 import {
   storageCreateSignedUrlProjector,
   storageRedeemUrlProjector,
+  observeStorageObjectProjector,
 } from "./projectors/storage.js";
 import {
   assertInvariantProjector,
@@ -35,6 +36,7 @@ const PROJECTORS: Record<string, Projector> = {
   "observe.dataReadback@1": observeDataReadbackProjector,
   "storage.createSignedUrl@1": storageCreateSignedUrlProjector,
   "storage.redeemUrl@1": storageRedeemUrlProjector,
+  "observe.storageObject@1": observeStorageObjectProjector,
   "cli.invoke@1": cliInvokeProjector,
   "observe.authSession@1": observeAuthSessionProjector,
   "assert.invariant@1": assertInvariantProjector,

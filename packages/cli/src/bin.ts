@@ -3,9 +3,10 @@ import { parseArgs } from "./config/parse-args.js";
 import { runCommand } from "./commands/run.js";
 import { compareCommand } from "./commands/compare.js";
 import { inspectCommand } from "./commands/inspect.js";
+import { replayCommand } from "./commands/replay.js";
 import { EXIT_INTERNAL_ERROR, EXIT_INVALID } from "./exit-codes.js";
 
-const NOT_IMPLEMENTED = new Set(["verify-upgrade", "replay", "reduce"]);
+const NOT_IMPLEMENTED = new Set(["verify-upgrade", "reduce"]);
 
 async function main(): Promise<number> {
   const args = parseArgs(process.argv.slice(2));
@@ -24,6 +25,8 @@ async function main(): Promise<number> {
       return compareCommand(args);
     case "inspect":
       return inspectCommand(args);
+    case "replay":
+      return replayCommand(args);
     case "":
       process.stderr.write("usage: supadiff <run|compare|inspect> ...\n");
       return EXIT_INVALID;

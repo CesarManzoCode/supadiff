@@ -41,6 +41,44 @@ export const storageCreateSignedUrlProjector: Projector = (
   };
 };
 
+/** observe.storageObject@1 — object metadata readback: owner, byte digest, length (§6.2 Storage row). */
+export const observeStorageObjectProjector: Projector = (
+  raw: RawObservation,
+): SemanticObservation => {
+  const body = raw.transport.responseBody;
+  const owner = jsonPointerGet(body, "/owner");
+  const bytesDigest = jsonPointerGet(body, "/bytesDigest");
+  const contentLength = jsonPointerGet(body, "/contentLength");
+
+  const contractual = ["/owner", "/bytesDigest", "/contentLength"];
+  const coverage = computeCoverage(body, { contractual, diagnostic: [], ignored: [] });
+
+  return {
+    format: "supadiff.semantic-observation",
+    projector: { id: "observe.storageObject", version: "1" },
+    sourceRawDigest: `sha256:${"0".repeat(64)}`,
+    service: "storage",
+    operation: raw.operation,
+    contractFields: {
+      "/owner": (owner ?? null) as never,
+      "/bytesDigest": (bytesDigest ?? null) as never,
+      "/contentLength": (contentLength ?? null) as never,
+    },
+    ignoredFields: [],
+    relationships: owner
+      ? [
+          {
+            predicate: "storage.owner-equals",
+            subject: `${raw.stepId}-object`,
+            object: String(owner),
+          },
+        ]
+      : [],
+    stateFacts: [],
+    coverage,
+  };
+};
+
 /** storage.redeemUrl@1 — judges redemption behavior, not the URL itself (§6.3, §6.5). */
 export const storageRedeemUrlProjector: Projector = (raw: RawObservation): SemanticObservation => {
   const body = raw.transport.responseBody;

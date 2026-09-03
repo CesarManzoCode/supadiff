@@ -12,8 +12,17 @@ function projectAuthSessionOperation(projectorId: string): Projector {
     const userEmail = jsonPointerGet(body, "/user/email");
     const sessionPresent = jsonPointerGet(body, "/session") !== undefined;
 
-    const contractual = ["/status", "/user/id", "/user/email", "/session"];
-    const coverage = computeCoverage(body, { contractual, diagnostic: [], ignored: [] });
+    const contractual = ["/status", "/user/id", "/user/email"];
+    // `/session` is redacted to secret handles before this runs (§6.4); its byte content is
+    // never contractual (§6.1: token bytes are diagnostic). Its *presence* is already
+    // captured as the `session-presence` state fact and the `session.belongs-to-actor`
+    // relationship below, so the whole subtree is one declared ignore rather than being
+    // walked field-by-field into unassessed secret-handle markers.
+    const coverage = computeCoverage(body, {
+      contractual,
+      diagnostic: [],
+      ignored: ["/session"],
+    });
 
     return {
       format: "supadiff.semantic-observation",
@@ -26,7 +35,18 @@ function projectAuthSessionOperation(projectorId: string): Projector {
         "/user/id": (userId ?? null) as never,
         "/user/email": (userEmail ?? null) as never,
       },
-      ignoredFields: [],
+      ignoredFields: sessionPresent
+        ? [
+            {
+              selector: "/session",
+              reason:
+                "token bytes are diagnostic-only (§6.1); presence/identity are captured as a " +
+                "state fact and a session.belongs-to-actor relationship instead",
+              rule: { id: "diagnostic.session-token-bytes", version: "1" },
+              evidence: ["Architecture Contract §6.1, §6.4"],
+            },
+          ]
+        : [],
       relationships:
         raw.actor.actorId && sessionPresent
           ? [
