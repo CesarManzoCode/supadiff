@@ -14,3 +14,6 @@ export * from "./observation/coverage.js";
 export * from "./observation/registry.js";
 export * from "./observation/response-secret-map.js";
 export * from "./comparison/index.js";
+export * from "./artifact/types.js";
+export * from "./artifact/bundle.js";
+export * from "./artifact/signature.js";
