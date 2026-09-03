@@ -48,6 +48,18 @@ async function runLiteToCompletion(
   return { stdout: proc.stdout(), stderr: proc.stderr() };
 }
 
+/**
+ * `EXPERIMENTAL_STORAGE=1` gates Storage entirely (README, GT §2.6) and must be set on
+ * EVERY invocation that touches the project — including `db diff`/`db reset`/`migration
+ * up`, since the Storage system schema (`storage.buckets`, `storage.objects`) is only
+ * provisioned when the flag was present at reconciliation time, not merely at `start`.
+ */
+function storageEnv(project: Pick<SupaliteProvisionedProject, "config">): NodeJS.ProcessEnv {
+  return project.config.experimentalFeatures.includes("storage")
+    ? { EXPERIMENTAL_STORAGE: "1" }
+    : {};
+}
+
 function parseGeneratedKeys(envFileText: string): { publishableKey: string; secretKey: string } {
   const publishable = /^SUPABASE_PUBLISHABLE_KEY=(.+)$/m.exec(envFileText)?.[1];
   const secret = /^SUPABASE_SECRET_KEY=(.+)$/m.exec(envFileText)?.[1];
@@ -141,6 +153,7 @@ export async function applySchemaResource(
   sql: string,
 ): Promise<void> {
   const { workdirPath, backend } = project;
+  const env = storageEnv(project);
   if (backend === "sqlite") {
     const dir = path.join(workdirPath, "supabase", "sqlite-migrations");
     mkdirSync(dir, { recursive: true });
@@ -150,14 +163,14 @@ export async function applySchemaResource(
     const stamp = new Date().toISOString().replace(/[-:T]/g, "").replace(/\..+/, "");
     const file = path.join(dir, `${stamp}_schema.sql`);
     writeFileSync(file, sql);
-    await runLiteToCompletion(workdirPath, ["migration", "up"]);
+    await runLiteToCompletion(workdirPath, ["migration", "up"], env);
     return;
   }
 
   const schemaPath = path.join(workdirPath, "supabase", "schemas", "schema.sql");
   writeFileSync(schemaPath, sql);
-  await runLiteToCompletion(workdirPath, ["db", "diff", "-f", "schema"]);
-  await runLiteToCompletion(workdirPath, ["db", "reset"]);
+  await runLiteToCompletion(workdirPath, ["db", "diff", "-f", "schema"], env);
+  await runLiteToCompletion(workdirPath, ["db", "reset"], env);
 }
 
 /** Starts (or restarts) the `lite start` server process and waits for it to accept requests. */
@@ -167,7 +180,7 @@ export async function startServer(project: SupaliteProvisionedProject): Promise<
     project.process = undefined;
   }
   const args = project.config.admin ? ["start"] : ["start", "--no-admin"];
-  const proc = runLite(project.workdirPath, args);
+  const proc = runLite(project.workdirPath, args, storageEnv(project));
   project.process = proc;
   await waitForHttpReady(`${project.baseUrl}/auth/v1/health`, {
     timeoutMs: project.config.readinessTimeoutMs,

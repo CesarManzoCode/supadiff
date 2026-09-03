@@ -23,7 +23,7 @@ import {
 } from "./provision.js";
 import type { SupaliteBackend, SupaliteTargetKind } from "./types.js";
 import { declareSupaliteCapabilities } from "./capabilities.js";
-import { readResourceText } from "../shared/resources.js";
+import { readResourceText, readResourceBytes } from "../shared/resources.js";
 
 interface DataFilter {
   field: string;
@@ -451,6 +451,203 @@ export class SupaliteTargetSession implements TargetSession {
           error: res.error ? { message: res.error.message, code: res.error.code } : null,
           status: res.status,
         });
+      }
+      case "storage.createBucket": {
+        const res = await client.storage.createBucket(revealed["bucket"] as string, {
+          public: (revealed["public"] as boolean | undefined) ?? false,
+        });
+        return {
+          category: res.error ? "application-error" : "success",
+          status: res.error ? 400 : 200,
+          responseBody: {
+            status: res.error ? 400 : 200,
+            name: res.data?.name ?? null,
+          },
+          durationMs: 0,
+        };
+      }
+      case "storage.upload": {
+        const resourceId = revealed["resourceId"] as StableId;
+        const resource = this.#resources.get(resourceId);
+        if (!resource) {
+          return {
+            category: "harness-failure",
+            harnessFailureReason: "driver-invariant",
+            durationMs: 0,
+          };
+        }
+        const bytes = await readResourceBytes(resource.source);
+        const bucket = revealed["bucket"] as string;
+        const objectPath = revealed["path"] as string;
+        const res = await client.storage
+          .from(bucket)
+          .upload(objectPath, bytes, { upsert: true, contentType: "application/octet-stream" });
+        return {
+          category: res.error ? "application-error" : "success",
+          status: res.error ? 400 : 200,
+          responseBody: {
+            status: res.error ? 400 : 200,
+            path: res.data?.path ?? null,
+            bytesDigest: `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
+            contentLength: bytes.length,
+            owner: null,
+          },
+          durationMs: 0,
+        };
+      }
+      case "storage.download": {
+        const bucket = revealed["bucket"] as string;
+        const objectPath = revealed["path"] as string;
+        const res = await client.storage.from(bucket).download(objectPath);
+        if (res.error || !res.data) {
+          return {
+            category: "application-error",
+            status: 404,
+            responseBody: { status: 404, bytesDigest: null, contentLength: null },
+            durationMs: 0,
+          };
+        }
+        const buf = Buffer.from(await res.data.arrayBuffer());
+        return {
+          category: "success",
+          status: 200,
+          responseBody: {
+            status: 200,
+            bytesDigest: `sha256:${createHash("sha256").update(buf).digest("hex")}`,
+            contentLength: buf.length,
+          },
+          durationMs: 0,
+        };
+      }
+      case "storage.list": {
+        const bucket = revealed["bucket"] as string;
+        const prefix = (revealed["prefix"] as string | undefined) ?? "";
+        const res = await client.storage.from(bucket).list(prefix);
+        const entries = (res.data ?? [])
+          .map((e) => ({ name: e.name }))
+          .sort((a, b) => a.name.localeCompare(b.name));
+        return {
+          category: res.error ? "application-error" : "success",
+          status: res.error ? 400 : 200,
+          responseBody: { status: res.error ? 400 : 200, entries },
+          durationMs: 0,
+        };
+      }
+      case "storage.remove": {
+        const bucket = revealed["bucket"] as string;
+        const paths = revealed["paths"] as string[];
+        const res = await client.storage.from(bucket).remove(paths);
+        const removed = (res.data ?? []).map((e) => e.name).sort();
+        return {
+          category: res.error ? "application-error" : "success",
+          status: res.error ? 400 : 200,
+          responseBody: { status: res.error ? 400 : 200, removed },
+          durationMs: 0,
+        };
+      }
+      case "storage.move": {
+        const bucket = revealed["bucket"] as string;
+        const res = await client.storage
+          .from(bucket)
+          .move(revealed["from"] as string, revealed["to"] as string);
+        return {
+          category: res.error ? "application-error" : "success",
+          status: res.error ? 400 : 200,
+          responseBody: { status: res.error ? 400 : 200 },
+          durationMs: 0,
+        };
+      }
+      case "storage.copy": {
+        const bucket = revealed["bucket"] as string;
+        const from = revealed["from"] as string;
+        const to = revealed["to"] as string;
+        const res = await client.storage.from(bucket).copy(from, to);
+        let bytesDigest: string | null = null;
+        if (!res.error) {
+          const dl = await client.storage.from(bucket).download(to);
+          if (dl.data) {
+            const buf = Buffer.from(await dl.data.arrayBuffer());
+            bytesDigest = `sha256:${createHash("sha256").update(buf).digest("hex")}`;
+          }
+        }
+        return {
+          category: res.error ? "application-error" : "success",
+          status: res.error ? 400 : 200,
+          responseBody: { status: res.error ? 400 : 200, bytesDigest },
+          durationMs: 0,
+        };
+      }
+      case "storage.createSignedUrl": {
+        const bucket = revealed["bucket"] as string;
+        const objectPath = revealed["path"] as string;
+        const expiresInSeconds = revealed["expiresInSeconds"] as number;
+        const res = await client.storage.from(bucket).createSignedUrl(objectPath, expiresInSeconds);
+        return {
+          category: res.error ? "application-error" : "success",
+          status: res.error ? 400 : 200,
+          responseBody: {
+            path: res.error ? null : objectPath,
+            expiresAt: res.error
+              ? null
+              : new Date(Date.now() + expiresInSeconds * 1000).toISOString(),
+            ...(res.data?.signedUrl ? { signedUrl: res.data.signedUrl } : {}),
+          },
+          durationMs: 0,
+        };
+      }
+      case "storage.redeemUrl": {
+        const url = revealed["signedUrlHandle"] as string;
+        try {
+          const res = await fetch(url);
+          const buf = Buffer.from(await res.arrayBuffer());
+          return {
+            category: res.ok ? "success" : "application-error",
+            status: res.status,
+            responseBody: {
+              status: res.status,
+              bytesDigest: res.ok
+                ? `sha256:${createHash("sha256").update(buf).digest("hex")}`
+                : null,
+              contentLength: res.ok ? buf.length : null,
+            },
+            durationMs: 0,
+          };
+        } catch {
+          return { category: "harness-failure", harnessFailureReason: "disconnect", durationMs: 0 };
+        }
+      }
+      case "observe.storageObject": {
+        const bucket = revealed["bucket"] as string;
+        const objectPath = revealed["path"] as string;
+        const lastSlash = objectPath.lastIndexOf("/");
+        const dir = lastSlash >= 0 ? objectPath.slice(0, lastSlash) : "";
+        const base = lastSlash >= 0 ? objectPath.slice(lastSlash + 1) : objectPath;
+        const listRes = await client.storage.from(bucket).list(dir, { search: base });
+        // Reproduced this sprint: Supalite's list entries carry the full object path in
+        // `name` even when listed under a directory prefix (real Supabase Storage returns a
+        // name relative to that prefix) -- matched against both shapes rather than assuming
+        // either, since this driver's job is to observe real behavior, not paper over it.
+        const row = listRes.data?.find((e) => e.name === base || e.name === objectPath) as
+          | { owner?: string | null; owner_id?: string | null }
+          | undefined;
+        const dl = await client.storage.from(bucket).download(objectPath);
+        let bytesDigest: string | null = null;
+        let contentLength: number | null = null;
+        if (dl.data) {
+          const buf = Buffer.from(await dl.data.arrayBuffer());
+          bytesDigest = `sha256:${createHash("sha256").update(buf).digest("hex")}`;
+          contentLength = buf.length;
+        }
+        return {
+          category: "success",
+          status: 200,
+          responseBody: {
+            owner: row?.owner_id ?? row?.owner ?? null,
+            bytesDigest,
+            contentLength,
+          },
+          durationMs: 0,
+        };
       }
       case "assert.invariant": {
         // The engine's `assert.invariant@1` projector reads `/satisfied`; the predicate

@@ -43,7 +43,6 @@ const STORAGE_OPS_EXPERIMENTAL = [
   "storage.object.write",
   "storage.object.read",
   "storage.signed-url.create",
-  "storage.signed-url.redeem",
 ] as const;
 
 const SHARED_MISC = ["cli.invoke", "schema.introspect", "cli.projectTree.read"] as const;
@@ -117,6 +116,14 @@ export function declareSupaliteCapabilities(kind: SupaliteTargetKind): TargetCap
         ),
       );
     }
+    list.push(
+      cap(
+        "storage.signed-url.redeem",
+        "unsupported",
+        "Not exercised this sprint on this backend (Storage bootstrap gap above); also see the " +
+          "signedUrl/signedURL key-name divergence reproduced on the other three backends.",
+      ),
+    );
   } else {
     for (const id of AUTH_OPS_EXACT) {
       list.push(cap(id, "exact", "GT §2.4; reproduced this sprint (signup, signin, session)."));
@@ -158,6 +165,23 @@ export function declareSupaliteCapabilities(kind: SupaliteTargetKind): TargetCap
         ),
       );
     }
+    list.push(
+      cap(
+        "storage.signed-url.redeem",
+        "unsupported",
+        "Reproduced this sprint against the real published @supabase/lite@0.9.0: the server's " +
+          'POST /storage/v1/object/sign/:bucket/*path response uses JSON key "signedUrl" ' +
+          '(lowercase "rl"), but the real Supabase Storage REST API contract — and the official ' +
+          "@supabase/storage-js@2.97.0 client bundled in supabase-js, which this sprint verified " +
+          'reads response.signedURL (capital "URL") to build StorageClient#createSignedUrl()\'s ' +
+          "returned URL — expects the capital-URL key. The mismatch leaves the client-constructed " +
+          "URL as `${baseUrl}/storage/v1undefined`; redeeming it returns Supalite's admin-dashboard " +
+          "SPA HTML with HTTP 200, not the uploaded object's bytes, and the server's own redemption " +
+          "endpoint DOES serve the correct bytes when given the (correctly key-cased) path directly " +
+          "— isolating the bug to this one response field name, not to signing or redemption " +
+          "generally. See docs/DIVERGENCES.md.",
+      ),
+    );
   }
 
   for (const id of SHARED_MISC) {
