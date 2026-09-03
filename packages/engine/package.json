@@ -1,0 +1,25 @@
+{
+  "name": "@supadiff/engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0 <23.0.0"
+  },
+  "exports": {
+    ".": "./dist/index.js",
+    "./spi": "./dist/spi/index.js"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@supadiff/spec": "workspace:*",
+    "semver": "7.6.3"
+  },
+  "devDependencies": {
+    "@types/semver": "7.5.8"
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "name": "supadiff-workspace",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0 <23.0.0"
+  },
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "build": "pnpm -r --workspace-concurrency=1 run build",
+    "typecheck": "pnpm -r --workspace-concurrency=1 run typecheck",
+    "lint": "eslint . --max-warnings=0",
+    "format:check": "prettier --check .",
+    "test": "pnpm -r --workspace-concurrency=1 run test",
+    "boundary-check": "node scripts/boundary-check.mjs",
+    "check": "pnpm boundary-check && pnpm lint && pnpm build && pnpm typecheck && pnpm format:check && pnpm test",
+    "test:observations": "pnpm --filter @supadiff/engine test -- observation",
+    "test:secret-corpus": "pnpm --filter @supadiff/engine test -- secret-corpus",
+    "test:comparison-honesty": "pnpm --filter @supadiff/engine test -- comparison-honesty",
+    "supadiff": "node packages/cli/dist/bin.js"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.15.0",
+    "@types/node": "22.10.2",
+    "eslint": "9.15.0",
+    "globals": "15.13.0",
+    "prettier": "3.4.2",
+    "typescript": "5.7.2",
+    "typescript-eslint": "8.18.1",
+    "vitest": "2.1.8"
+  }
+}

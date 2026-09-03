@@ -1,0 +1,11 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/spec" },
+    { "path": "packages/engine" },
+    { "path": "packages/targets" },
+    { "path": "packages/reducer" },
+    { "path": "packages/generators" },
+    { "path": "packages/cli" }
+  ]
+}

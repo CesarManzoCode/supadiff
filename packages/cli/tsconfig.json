@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "references": [
+    { "path": "../spec" },
+    { "path": "../engine" },
+    { "path": "../targets" },
+    { "path": "../reducer" },
+    { "path": "../generators" }
+  ],
+  "include": ["src"]
+}
