@@ -13,3 +13,4 @@ export * from "./observation/raw.js";
 export * from "./observation/coverage.js";
 export * from "./observation/registry.js";
 export * from "./observation/response-secret-map.js";
+export * from "./comparison/index.js";
