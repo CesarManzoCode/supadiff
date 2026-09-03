@@ -16,6 +16,13 @@ export interface ParsedArgs {
   positionals: string[];
   targets: string[];
   flags: CommonFlags;
+  /** `verify-upgrade` (L8) options; `parseArgs` always populates this. */
+  upgrade?: {
+    from?: string;
+    to?: string;
+    execute: boolean;
+    destDir?: string;
+  };
 }
 
 const BOOLEAN_FLAGS = new Set([
@@ -27,6 +34,7 @@ const BOOLEAN_FLAGS = new Set([
   "--allow-hosted",
   "--allow-hosted-create",
   "--allow-hosted-destructive",
+  "--execute",
 ]);
 
 export function parseArgs(argv: string[]): ParsedArgs {
@@ -41,6 +49,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
   let divergences: string | undefined;
   let quiet = false;
   let noColor = false;
+  let upFrom: string | undefined;
+  let upTo: string | undefined;
+  let upExecute = false;
+  let upDestDir: string | undefined;
 
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i]!;
@@ -51,6 +63,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
     else if (arg === "--fail-on") failOn = rest[++i]!.split(",");
     else if (arg === "--policy") policy = rest[++i];
     else if (arg === "--divergences") divergences = rest[++i];
+    else if (arg === "--from") upFrom = rest[++i];
+    else if (arg === "--to") upTo = rest[++i];
+    else if (arg === "--dest-dir") upDestDir = rest[++i];
+    else if (arg === "--execute") upExecute = true;
     else if (arg === "--quiet") quiet = true;
     else if (arg === "--no-color") noColor = true;
     else if (BOOLEAN_FLAGS.has(arg)) {
@@ -68,6 +84,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     positionals,
     targets,
     flags: { out, output, reference, failOn, policy, divergences, quiet, noColor },
+    upgrade: { from: upFrom, to: upTo, execute: upExecute, destDir: upDestDir },
   };
 }
 
