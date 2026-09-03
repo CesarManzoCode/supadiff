@@ -33,4 +33,13 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    // The one module allowed to import the pinned property adapter directly (§10.1):
+    // every other file in the repo, this package included, only ever sees the plain
+    // `GenerationPlan`/`ScenarioSpec` values it produces.
+    files: ["packages/generators/src/model/arbitraries.ts"],
+    rules: {
+      "no-restricted-imports": "off",
+    },
+  },
 );
