@@ -1,13 +1,20 @@
 import type { ComparisonPolicy, ComparisonRule, JsonPointer, StableId } from "@supadiff/spec";
+import { targetSelectorMatches, type TargetSelectionIdentity } from "./target-selector.js";
 
 export interface RuleMatchContext {
   service: string;
   operationId: StableId;
   operationVersion: string;
   observablePath: JsonPointer;
-  referenceTargetKind: string;
-  candidateTargetKind: string;
-  capabilityContext?: StableId;
+  reference: TargetSelectionIdentity;
+  candidate: TargetSelectionIdentity;
+  /**
+   * Capability ids resolved (declared+probed, gated by the requirement's `accept` list —
+   * §2.8) to something other than `unsupported` for this comparison. A rule scoped to a
+   * capability outside this set MUST NOT be selected (§3 selection tests: "wrong capability
+   * not selected"); selection never infers capability context from error-message strings.
+   */
+  resolvedCapabilities: ReadonlySet<StableId>;
 }
 
 export class AmbiguousRuleSelectionError extends Error {
@@ -27,10 +34,11 @@ function matches(rule: ComparisonRule, ctx: RuleMatchContext): boolean {
   if (s.operationId !== ctx.operationId) return false;
   if (s.operationVersion !== ctx.operationVersion) return false;
   if (s.observablePath !== ctx.observablePath) return false;
-  if (s.referenceTargetSelector.kind !== ctx.referenceTargetKind) return false;
-  if (s.candidateTargetSelector.kind !== ctx.candidateTargetKind) return false;
-  if (s.capabilityContext !== undefined && s.capabilityContext !== ctx.capabilityContext)
+  if (!targetSelectorMatches(s.referenceTargetSelector, ctx.reference)) return false;
+  if (!targetSelectorMatches(s.candidateTargetSelector, ctx.candidate)) return false;
+  if (s.capabilityContext !== undefined && !ctx.resolvedCapabilities.has(s.capabilityContext)) {
     return false;
+  }
   return true;
 }
 

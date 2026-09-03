@@ -92,11 +92,20 @@ export async function compareCommand(args: ParsedArgs): Promise<number> {
       ...compareStep({
         scenarioId: a.scenario.id,
         scenarioDigest: digestA,
+        scenarioRevision: a.scenario.revision,
         stepId: step.id,
         referenceSlot: "reference",
         candidateSlot: "candidate",
-        referenceTargetKind: referenceKind,
-        candidateTargetKind: candidateKind,
+        referenceTarget: {
+          kind: referenceKind,
+          backend: a.identity?.backend?.backend,
+          version: a.identity?.implementationVersion ?? "0.0.0",
+        },
+        candidateTarget: {
+          kind: candidateKind,
+          backend: b.identity?.backend?.backend,
+          version: b.identity?.implementationVersion ?? "0.0.0",
+        },
         referenceObservation: refObs,
         candidateObservation: candObs,
         referenceRawDigest: sha256OfCanonicalJson(refRaw as never),

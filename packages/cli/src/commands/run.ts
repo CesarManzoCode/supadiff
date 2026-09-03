@@ -10,10 +10,13 @@ import {
 import {
   computeScenarioDigest,
   sha256OfCanonicalJson,
+  type CapabilityLevel,
   type ComparisonResult,
   type RawObservation,
+  type StableId,
   type TargetSpec,
 } from "@supadiff/spec";
+import type { CapabilityResolution } from "@supadiff/engine";
 import type { ParsedArgs } from "../config/parse-args.js";
 import {
   CliInputError,
@@ -50,6 +53,31 @@ function finalSemanticObservationsFor(
   const out = new Map();
   for (const [stepId, key] of byStep) out.set(stepId, target.semanticObservations.get(key)!);
   return out;
+}
+
+/**
+ * Derives which capability ids are actually "in scope" for this comparison, and at what
+ * level, from the candidate target's frozen capability resolution — never from error-message
+ * inference (§3 workstream). Only `satisfied` and `accepted-approximation` requirements are
+ * in scope; `unsupported`/`identity-mismatch` requirements leave a capability-scoped rule
+ * unselectable, so selection falls back to the general rule (or `inconclusive` if none).
+ */
+function capabilityScopeFrom(resolution: CapabilityResolution[]): {
+  resolvedCapabilities: Set<StableId>;
+  capabilityLevels: Record<StableId, CapabilityLevel>;
+} {
+  const resolvedCapabilities = new Set<StableId>();
+  const capabilityLevels: Record<StableId, CapabilityLevel> = {};
+  for (const r of resolution) {
+    if (r.status === "satisfied") {
+      resolvedCapabilities.add(r.requirement.capability);
+      capabilityLevels[r.requirement.capability] = "exact";
+    } else if (r.status === "accepted-approximation" && r.matchedCapability) {
+      resolvedCapabilities.add(r.requirement.capability);
+      capabilityLevels[r.requirement.capability] = r.matchedCapability.level;
+    }
+  }
+  return { resolvedCapabilities, capabilityLevels };
 }
 
 function latestRawObservationFor(
@@ -154,9 +182,15 @@ export async function runCommand(args: ParsedArgs): Promise<number> {
   if (candidateSpecs.length > 0) {
     const referenceTarget = bundleTargets.find((t) => t.role === "reference")!;
     const referenceSemantics = finalSemanticObservationsFor(referenceTarget);
+    const referenceIdentity = result.targets.get(referenceSpec.id)!.identity;
     for (const candidateSpec of candidateSpecs) {
       const candidateTarget = bundleTargets.find((t) => t.slot === candidateSpec.id)!;
       const candidateSemantics = finalSemanticObservationsFor(candidateTarget);
+      const candidateRunResult = result.targets.get(candidateSpec.id)!;
+      const candidateIdentity = candidateRunResult.identity;
+      const { resolvedCapabilities, capabilityLevels } = capabilityScopeFrom(
+        candidateRunResult.capabilityResolution,
+      );
       for (const step of scenario.steps) {
         const refObs = referenceSemantics.get(step.id);
         const candObs = candidateSemantics.get(step.id);
@@ -168,11 +202,20 @@ export async function runCommand(args: ParsedArgs): Promise<number> {
           ...compareStep({
             scenarioId: scenario.id,
             scenarioDigest,
+            scenarioRevision: scenario.revision,
             stepId: step.id,
             referenceSlot: referenceTarget.slot,
             candidateSlot: candidateTarget.slot,
-            referenceTargetKind: referenceSpec.kind,
-            candidateTargetKind: candidateSpec.kind,
+            referenceTarget: {
+              kind: referenceSpec.kind,
+              backend: referenceIdentity?.backend?.backend,
+              version: referenceIdentity?.implementationVersion ?? "0.0.0",
+            },
+            candidateTarget: {
+              kind: candidateSpec.kind,
+              backend: candidateIdentity?.backend?.backend,
+              version: candidateIdentity?.implementationVersion ?? "0.0.0",
+            },
             referenceObservation: refObs,
             candidateObservation: candObs,
             referenceRawDigest: sha256OfCanonicalJson(refRaw as never),
@@ -180,6 +223,8 @@ export async function runCommand(args: ParsedArgs): Promise<number> {
             policy,
             registry: knownDivergences,
             now: new Date(),
+            resolvedCapabilities,
+            capabilityLevels,
           }),
         );
       }

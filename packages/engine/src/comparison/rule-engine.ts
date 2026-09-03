@@ -10,6 +10,7 @@ import type {
 } from "@supadiff/spec";
 import { sha256OfCanonicalJson } from "@supadiff/spec";
 import { deepEqual, evaluatePredicate } from "./predicate.js";
+import { pointerMapToTree } from "../values/json-pointer.js";
 
 export interface RuleEvalContext {
   ruleRef: { id: StableId; version: string };
@@ -242,8 +243,8 @@ export function evaluateRule(rule: RuleExpression, ctx: RuleEvalContext): Explan
 
     case "invariant": {
       const facts = {
-        reference: ctx.referenceObservation.contractFields,
-        candidate: ctx.candidateObservation.contractFields,
+        reference: pointerMapToTree(ctx.referenceObservation.contractFields),
+        candidate: pointerMapToTree(ctx.candidateObservation.contractFields),
       } as unknown as Record<string, JsonValue>;
       const ok = evaluatePredicate(rule.predicate, facts);
       return node(
@@ -273,8 +274,8 @@ export function evaluateRule(rule: RuleExpression, ctx: RuleEvalContext): Explan
 
     case "temporal-invariant": {
       const facts = {
-        reference: ctx.referenceObservation.contractFields,
-        candidate: ctx.candidateObservation.contractFields,
+        reference: pointerMapToTree(ctx.referenceObservation.contractFields),
+        candidate: pointerMapToTree(ctx.candidateObservation.contractFields),
       } as unknown as Record<string, JsonValue>;
       const ok = evaluatePredicate(rule.expression, facts);
       return node(

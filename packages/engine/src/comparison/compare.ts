@@ -3,6 +3,7 @@ import type {
   ComparisonPolicy,
   ComparisonResult,
   JsonPointer,
+  JsonValue,
   KnownDivergence,
   Sha256,
   SemanticObservation,
@@ -11,15 +12,20 @@ import type {
 import { evaluateRule } from "./rule-engine.js";
 import { selectRule } from "./select-rule.js";
 import { matchKnownDivergence } from "./divergence-registry.js";
+import type { TargetSelectionIdentity } from "./target-selector.js";
+import { pointerMapToTree } from "../values/json-pointer.js";
 
 export interface CompareStepInput {
   scenarioId: StableId;
   scenarioDigest: Sha256;
+  /** Author-controlled scenario revision, checked against a divergence entry's `revisionRange` (§2.12). */
+  scenarioRevision?: string;
   stepId: StableId;
   referenceSlot: StableId;
   candidateSlot: StableId;
-  referenceTargetKind: string;
-  candidateTargetKind: string;
+  /** Full target identity (kind, backend, version) used for rule and divergence selection (§7.2, §2.12). */
+  referenceTarget: TargetSelectionIdentity;
+  candidateTarget: TargetSelectionIdentity;
   referenceObservation: SemanticObservation;
   candidateObservation: SemanticObservation;
   referenceRawDigest: Sha256;
@@ -27,7 +33,18 @@ export interface CompareStepInput {
   policy: ComparisonPolicy;
   registry: readonly KnownDivergence[];
   now: Date;
-  /** Resolved capability level per capability id, when the selected rule pins one (§8.1). */
+  /**
+   * Capability ids resolved (declared+probed, already gated by the requirement's `accept`
+   * list — §2.8) to something other than `unsupported` for this comparison. Drives rule and
+   * divergence selection of capability-scoped entries; never inferred from error text.
+   */
+  resolvedCapabilities?: ReadonlySet<StableId>;
+  /**
+   * Resolved capability level per capability id, restricted to levels a requirement actually
+   * accepted (i.e. already the output of `resolveCapability`'s `satisfied`/`accepted-approximation`
+   * gate). Used only to decide `accepted-approximation` vs `match-*` after a rule already matched
+   * — never to select which rule applies.
+   */
   capabilityLevels?: Record<StableId, "exact" | "approximation" | "experimental" | "unsupported">;
 }
 
@@ -41,6 +58,7 @@ export function compareStep(input: CompareStepInput): ComparisonResult[] {
     reference: { targetSlot: input.referenceSlot, observationDigest: input.referenceRawDigest },
     candidate: { targetSlot: input.candidateSlot, observationDigest: input.candidateRawDigest },
   };
+  const resolvedCapabilities = input.resolvedCapabilities ?? new Set<StableId>();
 
   // Unassessed fields on either side are inconclusive on their own right (fail closed, §7.3).
   const unassessed = new Set([
@@ -77,8 +95,9 @@ export function compareStep(input: CompareStepInput): ComparisonResult[] {
       operationId: input.referenceObservation.operation.id,
       operationVersion: input.referenceObservation.operation.version,
       observablePath: path,
-      referenceTargetKind: input.referenceTargetKind,
-      candidateTargetKind: input.candidateTargetKind,
+      reference: input.referenceTarget,
+      candidate: input.candidateTarget,
+      resolvedCapabilities,
     });
 
     if (!rule) {
@@ -102,7 +121,7 @@ export function compareStep(input: CompareStepInput): ComparisonResult[] {
       candidateObservation: input.candidateObservation,
     });
 
-    const outcome = classifyOutcome(input, rule, explanation.verdict, path);
+    const outcome = classifyOutcome(input, rule, explanation.verdict, path, explanation);
     results.push({
       resultId: `res-${input.stepId}-${path}`,
       targetPair: [input.referenceSlot, input.candidateSlot],
@@ -113,7 +132,7 @@ export function compareStep(input: CompareStepInput): ComparisonResult[] {
       outcome: outcome.outcome,
       reference: evidence.reference,
       candidate: evidence.candidate,
-      explanation,
+      explanation: outcome.explanation ?? explanation,
       ...(outcome.divergenceId ? { divergenceId: outcome.divergenceId } : {}),
     });
   }
@@ -153,11 +172,21 @@ function classifyOutcome(
   rule: ComparisonPolicy["rules"][number],
   verdict: "satisfied" | "failed" | "not-applicable",
   path: JsonPointer,
-): { outcome: ComparisonOutcome; divergenceId?: StableId } {
+  explanation: ComparisonResult["explanation"],
+): {
+  outcome: ComparisonOutcome;
+  divergenceId?: StableId;
+  explanation?: ComparisonResult["explanation"];
+} {
   if (verdict === "not-applicable") return { outcome: "match-semantic" };
 
+  const capabilityId = rule.selector.capabilityContext;
+  const capLevel = capabilityId ? input.capabilityLevels?.[capabilityId] : undefined;
+
   if (verdict === "satisfied") {
-    const capLevel = input.capabilityLevels?.[rule.selector.capabilityContext ?? ""];
+    // Accepted-approximation requires BOTH the rule to be satisfied under a capability-scoped
+    // policy AND the resolved capability level to genuinely be approximation/experimental —
+    // never awarded merely because some rule happened to match (§8, workstream 3).
     if (capLevel === "approximation" || capLevel === "experimental") {
       return { outcome: "accepted-approximation" };
     }
@@ -166,18 +195,42 @@ function classifyOutcome(
   }
 
   // verdict === "failed"
+  const failureFacts: Record<string, JsonValue> = {
+    reference: pointerMapToTree(input.referenceObservation.contractFields) as JsonValue,
+    candidate: pointerMapToTree(input.candidateObservation.contractFields) as JsonValue,
+  };
   const match = matchKnownDivergence(input.registry, {
-    referenceKind: input.referenceTargetKind,
-    candidateKind: input.candidateTargetKind,
+    reference: input.referenceTarget,
+    candidate: input.candidateTarget,
     scenarioId: input.scenarioId,
+    scenarioRevision: input.scenarioRevision,
     stepId: input.stepId,
     observablePath: path,
     ruleId: rule.id,
     ruleVersion: rule.version,
+    capability: capabilityId,
+    failureFacts,
     now: input.now,
   });
   if (match.status === "matched")
     return { outcome: "known-divergence", divergenceId: match.entry.id };
   if (match.status === "ambiguous") return { outcome: "inconclusive" };
+  if (match.status === "expired") {
+    // Expired entries never classify; they produce new-divergence plus an explicit
+    // expired-registry-entry diagnostic until revalidated (§2.12).
+    return {
+      outcome: "new-divergence",
+      explanation: {
+        ...explanation,
+        transformations: [
+          ...explanation.transformations,
+          {
+            kind: "expired-registry-entry",
+            description: `registry entry "${match.entry.id}" structurally matched but expired at ${match.entry.expiresAt}; treated as new-divergence pending revalidation`,
+          },
+        ],
+      },
+    };
+  }
   return { outcome: "new-divergence" };
 }
