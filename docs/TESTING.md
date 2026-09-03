@@ -9,7 +9,7 @@
 | L5 CLI                   | `supadiff` (cli)                                                                   | 4          | 24    | fake only                                |
 | L6 Supalite family       | `packages/targets/test/integration/supalite.test.ts`                               | 1          | 8     | **real** `@supabase/lite`                |
 | L7 supabase-local + peer | `packages/targets/test/integration/peer-data-auth-rls.test.ts`                     | 1          | 5     | **real** Supalite + supabase-local       |
-| L8 verify-upgrade        | `packages/targets/test/integration/upgrade-local.test.ts`                          | 1          | 2     | **real** Docker, pg 15 → 17              |
+| L8 verify-upgrade        | `packages/targets/test/integration/upgrade-local.test.ts`                          | 1          | 4     | **real** Docker + real `lite upgrade`    |
 | L9 fault lab + replay    | `test/fault-lab/fault-lab.test.ts`, `replay.test.ts`                               | 2          | 18    | fake (deliberately, §15.2)               |
 | L10 reducer              | `test/fault-lab/reduce.test.ts`                                                    | 1          | 2     | fake (deliberately, §15.2)               |
 | L11 Storage peer         | `packages/targets/test/integration/storage.test.ts` + `peer-storage-local.test.ts` | 2          | 2     | **real**, Supalite×2 and Supalite↔local |
@@ -42,7 +42,7 @@ node packages/cli/dist/bin.js run test/fixtures/basic.json \
 
 pnpm test:integration:supalite                            # L6 — real, ~1 min, spawns real lite processes
 pnpm test:integration:peer-data-auth-rls                  # L7 — real, ~2 min, Supalite + supabase-local (Docker); Data+Auth+RLS peer + failure modes
-pnpm test:integration:upgrade-local                       # L8 — real, ~2 min, Docker pg 15 -> 17 upgrade verification
+pnpm test:integration:upgrade-local                       # L8 — real, ~4 min, Supalite -> real `lite upgrade` -> supabase-local (Docker)
 pnpm test:fault-lab:replay                                # L9 — dogfood fault lab + supadiff replay
 pnpm test:fault-lab:reduce                                # L10 — supadiff reduce
 pnpm test:integration:peer-storage                        # L11 — real, ~1 min, Supalite×2 + Supalite↔supabase-local Storage
@@ -124,14 +124,22 @@ artifact`, exact exit codes (0/10/20/30) under different `--fail-on`
   CLI version → identity mismatch → `inconclusive` with no plan; two
   concurrent provisions get distinct project ids and ports; `forceCleanupProject`
   is idempotent.
-- **L8** (`packages/targets/test/integration/upgrade-local.test.ts`): the
-  dry-run plans without provisioning anything; `--execute` runs a real
-  Postgres 15 → 17 local upgrade (pg_dump → fresh destination workdir →
-  restore) and every §12 preservation check passes — row IDs, sequence
-  `last_value`, `auth.users`, and `pg_policies` are preserved; the
-  pre-upgrade access token is rejected by the new stack; re-authentication
-  with the same credentials yields a new session; Storage preservation is
-  recorded `skipped` (unsupported) before any Storage mutation.
+- **L8** (`packages/targets/test/integration/upgrade-local.test.ts`, 4
+  tests): the dry-run plans the §12 workflow without provisioning anything;
+  `--require-storage` is **rejected before S0 is bootstrapped**; a transition
+  failure after a real dry-run cleans up and leaks no containers; and
+  `--execute` runs the real transition — a file-backed
+  `supalite-sqlite-postgres` source, cloned into a retained baseline B and an
+  upgrade-source U, then the real `lite upgrade --target local --dry-run` and
+  real `lite upgrade --target local --local-dir <C>` into a fresh
+  Supabase-local stack. Every property holds: source workdir untouched,
+  baseline retained, row IDs + Auth logical subject preserved, deliberate
+  corruption detected, pre-upgrade token rejected by C, the actor
+  re-authenticates for the same subject, RLS behavior lockstep B vs C. The
+  `sequence-next-use` check is a `divergence` (registered:
+  `div.lite-upgrade-local-sequence-not-reset` — `lite upgrade` from a
+  file-backed source does not carry the serial-sequence position), which the
+  test accepts as `pass` or `divergence`.
 - **L9** (`test/fault-lab/`): all six deliberately incompatible fault
   classes (§15.5: RLS leak, partial write, RETURNING leak, Auth subject
   swap, Storage owner loss, normalization trap) proven caught as
@@ -206,8 +214,12 @@ credentials, no Cartesian target matrix, no Docker. A third job,
 
 - `supabase-hosted` driver, and everything depending on it (L13) — out of
   scope for this sprint.
-- L8 covers a **local** Postgres major-version upgrade; Storage byte
-  preservation across the upgrade is explicitly `unsupported`, not verified.
+- L8 covers the **local** `lite upgrade --target local` transition (Supalite
+  → Supabase-local); the hosted `--target hosted` path is not exercised.
+  Storage byte preservation across the upgrade is `unsupported` (rejected
+  before mutation when required), and `lite upgrade` from a file-backed
+  source does not carry the serial-sequence position (a registered
+  divergence, not a bug in `verify-upgrade`).
 - Driver contract test suite generalized across arbitrary future drivers
   (§15.1 item 5) — only the Supalite family and `supabase-local` are
   exercised.

@@ -1,40 +1,65 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createClient } from "@supabase/supabase-js";
 import { spawnManaged } from "../shared/process.js";
-import { SUPABASE_CLI_PACKAGE } from "../shared/supabase-cli-cache.js";
+import { leasePort } from "../shared/ports.js";
+import { ensureSupaliteInstall, SUPALITE_PACKAGE } from "../shared/package-cache.js";
 import {
+  ensureSupabaseCli,
+  supabaseCliBin,
+  SUPABASE_CLI_PACKAGE,
+} from "../shared/supabase-cli-cache.js";
+import {
+  applySchemaResource,
   cleanupWorkdir,
-  forceCleanupProject,
-  scaffoldSupabaseLocalProject,
-  startStack,
-  stopStack,
-  type SupabaseLocalProvisionedProject,
-} from "./provision.js";
-import { DEFAULT_ROUTE_PREFIXES, type SupabaseLocalTargetConfig } from "./types.js";
+  scaffoldSupaliteProject,
+  startServer,
+  stopServer,
+  type SupaliteProvisionedProject,
+} from "../supalite/provision.js";
+import { forceCleanupProject } from "./provision.js";
+import type { SupaliteTargetConfig } from "../supalite/types.js";
 
 /**
- * L8 — local Supabase upgrade verification (`supadiff verify-upgrade`).
+ * L8 — Supalite → real `lite upgrade` → Supabase-local upgrade verification
+ * (`supadiff verify-upgrade`, Architecture Contract §12).
  *
- * Implements the flow the sprint brief lays out for Architecture Contract §12:
- *  - a **mandatory dry-run** (nothing is provisioned or mutated unless `execute: true`);
- *  - the upgraded stack is brought up in a **fresh destination workdir**, never in place;
- *  - **no session preservation** — a pre-upgrade access token is presented to the new
- *    stack and must be rejected; the user must **re-authenticate** with the same
- *    credentials and get a brand-new session;
- *  - **ID / sequence / Auth / RLS preservation** are each checked against a snapshot
- *    taken before the upgrade;
- *  - **Storage preservation is `unsupported`** and is recorded as a skipped check taken
- *    *before* any Storage mutation, so nothing about Storage is silently claimed.
+ * The public L8 surface verifies the transition the contract actually defines:
  *
- * The upgrade mechanism is the documented local path: `pg_dump` the source database,
- * bring up a new stack at the target Postgres major version, and restore. Source and
- * destination stacks run **sequentially** (source stopped before destination starts) so
- * peak memory is one stack, not two.
+ *   S0 (a file-backed Supalite target)
+ *     → preservation probe P0
+ *     → clone S0 into baseline B and upgrade-source U, then close S0
+ *     → real `lite upgrade --target local --dry-run` from U
+ *     → real `lite upgrade --target local --local-dir <C>` from U to a FRESH
+ *       Supabase-local stack C (the pinned `supabase` CLI, driven through
+ *       `LITE_SUPABASE_CLI`)
+ *     → probe C, re-authenticate the fixture actor against C (sessions are NOT
+ *       migrated — `migrateSessions = false`, old token bytes are never replayed)
+ *     → preservation comparison (row IDs, sequence next-use, Auth logical subject)
+ *       against probe P0
+ *     → same-behavior scenario run lockstep on B and C (owner-scoped RLS)
+ *     → artifact / results / cleanup.
+ *
+ * The transition mechanism is the REAL `lite upgrade` from the exact-pinned
+ * `@supabase/lite@0.9.0` — never a `pg_dump`/restore substitute.
+ *
+ * Storage: `lite upgrade` does not carry Storage (UPGRADE.md "Known Gaps"), and the
+ * local target brings up no `storage-api` service. When a caller declares that the
+ * workflow *requires* Storage preservation, this is rejected **before any mutation**
+ * (before S0 is even bootstrapped) rather than run and marked "skipped" afterwards.
  */
 
-export type UpgradeCheckStatus = "pass" | "fail" | "skipped";
+export type UpgradeCheckStatus = "pass" | "fail" | "skipped" | "rejected" | "divergence";
 
 export interface UpgradeCheck {
   name: string;
@@ -43,71 +68,105 @@ export interface UpgradeCheck {
 }
 
 export interface VerifyUpgradeOptions {
-  fromMajor: number;
-  toMajor: number;
-  /** When false (the default), only the dry-run plan is produced — nothing is provisioned. */
+  /** When false (the default) only the dry-run plan is produced — nothing is provisioned. */
   execute?: boolean;
-  /** Parent directory for the fresh destination workdir. Defaults to an OS temp dir. */
-  destParentDir?: string;
-  cliVersion?: string;
+  /**
+   * Declares that the workflow requires Storage byte preservation across the upgrade.
+   * `lite upgrade` cannot preserve Storage, so this is rejected before any mutation.
+   */
+  requireStoragePreservation?: boolean;
+  /** Parent directory for the transient S0 / B / U / C workdirs. Defaults to an OS temp dir. */
+  workdirParentDir?: string;
+  /** Pinned `supabase` CLI version `lite upgrade --target local` is pointed at. */
+  supabaseCliVersion?: string;
   readinessTimeoutMs?: number;
   /** Sink for progress lines (defaults to no-op); the CLI passes `process.stderr.write`. */
   log?: (line: string) => void;
+  /**
+   * Test-only: throw immediately after the real `lite upgrade --dry-run` succeeds, to
+   * exercise the transition-failure cleanup/recovery path against real provisioned
+   * resources (S0 bootstrapped, P0 probed, cloned) without a partially-applied stack.
+   */
+  injectTransitionFailure?: boolean;
+}
+
+export interface UpgradeTargetIdentity {
+  role: "source" | "baseline" | "destination";
+  kind: string;
+  implementation: string;
+  implementationVersion: string;
+  packageIntegrity?: string;
+  backend?: string;
+  workdir?: string;
+  cliVersion?: string;
+  projectId?: string;
+  apiUrl?: string;
 }
 
 export interface VerifyUpgradeReport {
   format: "supadiff.verify-upgrade";
-  formatVersion: "1";
-  fromMajor: number;
-  toMajor: number;
+  formatVersion: "2";
   dryRun: boolean;
   mutated: boolean;
-  /** Ordered description of every step the flow runs (always populated, dry-run or not). */
+  /** True when `requireStoragePreservation` forced a pre-mutation rejection. */
+  rejectedBeforeMutation: boolean;
+  /** Ordered description of the §12 workflow segments (always populated). */
   plan: string[];
   checks: UpgradeCheck[];
-  sourceCliVersion?: string;
-  destCliVersion?: string;
-  destWorkdir?: string;
+  /** The exact `lite upgrade --dry-run` argv exercised (execute mode only). */
+  liteDryRunCommand?: string;
+  /** The exact `lite upgrade` argv exercised for the real transition (execute mode only). */
+  liteUpgradeCommand?: string;
+  /** Absolute path of the `@supabase/lite` CLI entrypoint the commands ran. */
+  liteCliPath?: string;
+  targets: UpgradeTargetIdentity[];
+  /** Registered known-divergence ids reproduced by this run (does not fail `ok`). */
+  divergences: string[];
   ok: boolean;
 }
 
-const PLAN = (from: number, to: number): string[] => [
-  `dry-run: describe the full flow and exit (this list) unless --execute is passed`,
-  `provision a supabase-local stack at Postgres major ${from} in an isolated source workdir`,
-  `apply the upgrade fixture schema (todos + owner-scoped RLS, counters with a bigserial sequence)`,
-  `sign up an owner via GoTrue, insert owned rows, advance the sequence`,
-  `snapshot BEFORE upgrade: row ids, sequence last_value, auth.users, pg_policies`,
-  `record Storage-preservation = unsupported (before any Storage mutation)`,
-  `capture the owner's pre-upgrade access token`,
-  `pg_dump the source database (public schema+data, auth.users/identities data)`,
-  `stop the source stack`,
-  `provision a NEW supabase-local stack at Postgres major ${to} in a FRESH destination workdir`,
-  `restore the dump into the destination database and re-apply Data API grants`,
-  `no session preservation: present the pre-upgrade token to the new stack — expect rejection`,
-  `re-authenticate: sign in again with the same credentials — expect a new session`,
-  `verify ID preservation: destination row ids == snapshot`,
-  `verify sequence preservation: destination last_value >= snapshot; next insert does not collide`,
-  `verify Auth preservation: destination auth.users == snapshot (same uuid + email)`,
-  `verify RLS preservation: destination pg_policies == snapshot; owner sees own row, anon sees none`,
-  `Storage preservation: skipped (unsupported) — never claimed`,
-  `tear down the destination stack and remove both workdirs`,
+const PLAN: string[] = [
+  "dry-run: describe the §12 workflow and exit (this list) unless --execute is passed",
+  "reject before any mutation if the workflow requires Storage preservation (lite upgrade cannot carry Storage)",
+  "S0 bootstrap: scaffold a file-backed supalite-sqlite-postgres project, apply the upgrade fixture schema (todos + owner-scoped RLS, counters bigserial sequence)",
+  "S0: sign the owner up via GoTrue, insert owned rows, advance the sequence, capture the owner's pre-upgrade access token",
+  "preservation probe P0: snapshot todo row ids, counters max id, auth.users (uuid + email)",
+  "clone S0 into baseline B and upgrade-source U (file copy of the workdir), re-link the pinned package, lease fresh ports",
+  "close S0 (stop its server, remove its workdir) — the source is never mutated in place",
+  "real `lite upgrade --target local --dry-run --no-migrate-sessions` from U: readiness + in-memory pglite rehearsal",
+  "real `lite upgrade --target local --local-dir <C> --force --no-migrate-sessions` from U: apply schema/auth/data to a FRESH Supabase-local stack C via the pinned supabase CLI",
+  "assert U was not mutated in place (config.toml byte-identical, no config.toml.bak, [db].driver intact)",
+  "probe C capabilities (auth + rest health)",
+  "session non-preservation: present the pre-upgrade token to C — expect rejection (JWT secret is not migrated)",
+  "actor rebind + reauthentication: normalize migrated auth.users to the CLI GoTrue schema, then sign in again on C with the same credentials — expect a new session for the same logical subject",
+  "preservation comparison vs P0: destination row ids preserved; deliberate corruption is detected; auth.users uuid + email preserved; sequence next-use compared B vs C (a registered divergence — lite does not carry the sequence position)",
+  "same-behavior scenario lockstep on B and C: owner sees own todos, anon sees none — outcomes must agree",
+  "Storage preservation: skipped (unsupported) unless it was required, in which case it was already rejected before mutation",
+  "artifact / results / cleanup: stop C and B, force-clean containers, remove all workdirs; baseline B is retained until cleanup",
 ];
 
-const FIXTURE_SCHEMA = `
-create table public.todos (
+/** Maps a `divergence`-status check to the registered known-divergence id it reproduces. */
+const DIVERGENCE_ID_BY_CHECK: Record<string, string> = {
+  "sequence-next-use": "div.lite-upgrade-local-sequence-not-reset",
+};
+
+const FIXTURE_SCHEMA = `create table public.todos (
   id uuid primary key default gen_random_uuid(),
   owner_id uuid not null,
   title text not null,
   created_at timestamptz not null default now()
 );
+
 alter table public.todos enable row level security;
+
 create policy "owner can select own todos" on public.todos
   for select using (auth.uid() = owner_id);
+
 create policy "owner can insert own todos" on public.todos
   for insert with check (auth.uid() = owner_id);
 
 create table public.counters (
-  id bigint generated always as identity primary key,
+  id bigserial primary key,
   label text not null
 );
 `;
@@ -121,14 +180,16 @@ alter default privileges in schema public grant all on sequences to anon, authen
 notify pgrst, 'reload schema';
 `;
 
-function localConfig(major: number, readinessTimeoutMs: number): SupabaseLocalTargetConfig {
+const OWNER_PASSWORD = "upgrade-owner-pw-12345678";
+
+function supaliteConfig(readinessTimeoutMs: number): SupaliteTargetConfig {
   return {
-    dbMajorVersion: major,
-    excludedServices: [],
+    admin: false,
+    forceRollback: false,
     experimentalFeatures: [],
     keyMode: "opaque-v1",
-    routePrefixes: DEFAULT_ROUTE_PREFIXES,
-    analytics: false,
+    routePrefixes: { auth: "/auth/v1", rest: "/rest/v1", storage: "/storage/v1" },
+    transport: "socket-server",
     readinessTimeoutMs,
   };
 }
@@ -143,154 +204,240 @@ async function sql<T = Record<string, unknown>>(dbUrl: string, query: string): P
   }
 }
 
-async function dockerExecCapture(
-  container: string,
-  argv: string[],
+function hashFile(p: string): string {
+  return createHash("sha256").update(readFileSync(p)).digest("hex");
+}
+
+function parseEnvKeys(workdir: string): { publishableKey: string; secretKey: string } {
+  const text = readFileSync(path.join(workdir, ".env"), "utf8");
+  const publishableKey = /^SUPABASE_PUBLISHABLE_KEY=(.+)$/m.exec(text)?.[1] ?? "";
+  const secretKey = /^SUPABASE_SECRET_KEY=(.+)$/m.exec(text)?.[1] ?? "";
+  return { publishableKey, secretKey };
+}
+
+/** Copies a Supalite workdir tree (minus node_modules), re-links the shared package cache. */
+async function cloneWorkdir(src: string, dst: string): Promise<void> {
+  cpSync(src, dst, {
+    recursive: true,
+    filter: (from) => path.basename(from) !== "node_modules",
+  });
+  rmSync(path.join(dst, "node_modules"), { recursive: true, force: true });
+  const cacheDir = await ensureSupaliteInstall();
+  symlinkSync(path.join(cacheDir, "node_modules"), path.join(dst, "node_modules"), "dir");
+}
+
+function repointApiPort(workdir: string, port: number): void {
+  const configPath = path.join(workdir, "supabase", "config.toml");
+  const toml = readFileSync(configPath, "utf8");
+  const rewritten = toml.replace(/(\[api\][^[]*?\bport\s*=\s*)\d+/, `$1${port}`);
+  if (rewritten === toml) throw new Error("verify-upgrade: could not repoint [api].port in clone");
+  writeFileSync(configPath, rewritten);
+}
+
+interface P0Snapshot {
+  todoIds: string[];
+  countersMaxId: string;
+  authUsers: Array<{ id: string; email: string }>;
+  ownerId: string;
+  ownerEmail: string;
+}
+
+/** Pure set comparison used for ID preservation *and* deliberate-corruption detection. */
+function idSetPreserved(
+  expected: readonly string[],
+  actual: readonly string[],
+): { preserved: boolean; missing: string[]; unexpected: string[] } {
+  const e = new Set(expected);
+  const a = new Set(actual);
+  const missing = [...e].filter((v) => !a.has(v));
+  const unexpected = [...a].filter((v) => !e.has(v));
+  return { preserved: missing.length === 0 && unexpected.length === 0, missing, unexpected };
+}
+
+async function runLite(
+  cwd: string,
+  args: string[],
+  extraEnv: NodeJS.ProcessEnv,
 ): Promise<{ code: number | null; stdout: string; stderr: string }> {
-  const proc = spawnManaged("docker", ["exec", container, ...argv], {
-    cwd: process.cwd(),
-    env: process.env,
+  const liteBin = path.join(cwd, "node_modules", "@supabase", "lite", "dist", "cli", "index.js");
+  const proc = spawnManaged(process.execPath, [liteBin, ...args], {
+    cwd,
+    env: { ...process.env, ...extraEnv, DO_NOT_TRACK: "1", CI: "1" },
   });
   const res = await proc.waitForExit();
   return { code: res.code, stdout: proc.stdout(), stderr: proc.stderr() };
 }
 
-async function dockerExecStdin(
-  container: string,
-  argv: string[],
-  stdin: string,
-): Promise<{ code: number | null; stderr: string }> {
-  // spawnManaged uses stdio ["ignore","pipe","pipe"]; for stdin we go direct.
-  const { spawn } = await import("node:child_process");
-  return new Promise((resolve) => {
-    const child = spawn("docker", ["exec", "-i", container, ...argv], {
-      stdio: ["pipe", "ignore", "pipe"],
-    });
-    let stderr = "";
-    let settled = false;
-    const done = (code: number | null): void => {
-      if (settled) return;
-      settled = true;
-      resolve({ code, stderr });
-    };
-    child.on("error", (e) => {
-      stderr += `\n${String(e)}`;
-      done(null);
-    });
-    child.stderr.on("data", (c: Buffer) => (stderr += c.toString("utf8")));
-    child.on("close", (code) => done(code));
-    child.stdin.on("error", () => {
-      /* EPIPE if the child exits before we finish writing — the exit code carries the failure */
-    });
-    child.stdin.end(stdin);
-  });
-}
-
-function dbContainer(project: SupabaseLocalProvisionedProject): string {
-  return `supabase_db_${project.projectId}`;
-}
-
-interface Snapshot {
-  rowIds: string[];
-  sequenceLastValue: string;
-  authUsers: Array<{ id: string; email: string }>;
-  policies: Array<{
-    policyname: string;
-    cmd: string;
-    qual: string | null;
-    with_check: string | null;
-  }>;
-}
-
-/** Runs the L8 verify-upgrade flow. In dry-run mode returns only the plan. */
-export async function verifyUpgrade(options: VerifyUpgradeOptions): Promise<VerifyUpgradeReport> {
+/** Runs the L8 verify-upgrade workflow. In dry-run mode returns only the plan. */
+export async function verifyUpgrade(
+  options: VerifyUpgradeOptions = {},
+): Promise<VerifyUpgradeReport> {
   const log = options.log ?? (() => {});
-  const fromMajor = options.fromMajor;
-  const toMajor = options.toMajor;
-  const cliVersion = options.cliVersion ?? SUPABASE_CLI_PACKAGE.version;
   const readiness = options.readinessTimeoutMs ?? 180_000;
-  const plan = PLAN(fromMajor, toMajor);
+  const cliVersion = options.supabaseCliVersion ?? SUPABASE_CLI_PACKAGE.version;
+
+  const sourceIdentity: UpgradeTargetIdentity = {
+    role: "source",
+    kind: "supalite-sqlite-postgres",
+    implementation: SUPALITE_PACKAGE.name,
+    implementationVersion: SUPALITE_PACKAGE.version,
+    packageIntegrity: SUPALITE_PACKAGE.integrity,
+    backend: "sqlite-postgres",
+  };
 
   if (!options.execute) {
     return {
       format: "supadiff.verify-upgrade",
-      formatVersion: "1",
-      fromMajor,
-      toMajor,
+      formatVersion: "2",
       dryRun: true,
       mutated: false,
-      plan,
+      rejectedBeforeMutation: false,
+      plan: PLAN,
       checks: [
         {
           name: "dry-run",
           status: "skipped",
           detail:
-            "Mandatory dry-run: no stack was provisioned and nothing was mutated. Re-run with " +
-            "execute:true (CLI: --execute) to perform the upgrade verification.",
+            "Mandatory dry-run: nothing was provisioned and nothing was mutated. Re-run with " +
+            "execute:true (CLI: --execute) to run the real Supalite → lite upgrade → Supabase-local flow.",
         },
       ],
+      targets: [sourceIdentity],
+      divergences: [],
       ok: true,
     };
   }
 
-  const checks: UpgradeCheck[] = [];
-  const destParent = options.destParentDir ?? tmpdir();
-  const sourceWorkdir = mkdtempSync(path.join(destParent, "sd-upgrade-src-"));
-  const destWorkdir = mkdtempSync(path.join(destParent, "sd-upgrade-dst-"));
-  let source: SupabaseLocalProvisionedProject | undefined;
-  let dest: SupabaseLocalProvisionedProject | undefined;
-
-  const finish = async (ok: boolean): Promise<VerifyUpgradeReport> => {
-    if (dest?.started) await stopStack(dest).catch(() => {});
-    if (dest) await forceCleanupProject(dest.projectId).catch(() => {});
-    if (source?.started) await stopStack(source).catch(() => {});
-    if (source) await forceCleanupProject(source.projectId).catch(() => {});
-    cleanupWorkdir(sourceWorkdir);
-    cleanupWorkdir(destWorkdir);
+  // --- Storage: reject BEFORE any mutation (never run-then-skip) ---
+  if (options.requireStoragePreservation) {
     return {
       format: "supadiff.verify-upgrade",
-      formatVersion: "1",
-      fromMajor,
-      toMajor,
+      formatVersion: "2",
+      dryRun: false,
+      mutated: false,
+      rejectedBeforeMutation: true,
+      plan: PLAN,
+      checks: [
+        {
+          name: "storage-preservation",
+          status: "rejected",
+          detail:
+            "The workflow requires Storage byte preservation, which `lite upgrade` cannot provide " +
+            "(UPGRADE.md 'Known Gaps': Storage migration is not implemented; the local target runs " +
+            "no storage-api). Rejected before S0 was bootstrapped — nothing was provisioned or mutated.",
+        },
+      ],
+      targets: [sourceIdentity],
+      divergences: [],
+      ok: false,
+    };
+  }
+
+  const checks: UpgradeCheck[] = [];
+  const parent = options.workdirParentDir ?? tmpdir();
+  const s0Workdir = mkdtempSync(path.join(parent, "sd-l8-s0-"));
+  const bWorkdir = mkdtempSync(path.join(parent, "sd-l8-baseline-"));
+  const uWorkdir = mkdtempSync(path.join(parent, "sd-l8-upgradesrc-"));
+  const cWorkdir = mkdtempSync(path.join(parent, "sd-l8-dest-"));
+
+  const targets: UpgradeTargetIdentity[] = [{ ...sourceIdentity, workdir: s0Workdir }];
+  const baselineIdentity: UpgradeTargetIdentity = {
+    ...sourceIdentity,
+    role: "baseline",
+    workdir: bWorkdir,
+  };
+  const destIdentity: UpgradeTargetIdentity = {
+    role: "destination",
+    kind: "supabase-local",
+    implementation: SUPABASE_CLI_PACKAGE.name,
+    implementationVersion: cliVersion,
+    workdir: cWorkdir,
+  };
+  targets.push(baselineIdentity, destIdentity);
+
+  const cliCacheDir = await ensureSupabaseCli(cliVersion);
+  const supabaseBin = supabaseCliBin(cliCacheDir);
+  const liteEnv: NodeJS.ProcessEnv = {
+    LITE_SUPABASE_CLI: supabaseBin,
+    SUPABASE_INTERNAL_IMAGE_REGISTRY:
+      process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"] ?? "public.ecr.aws",
+  };
+  const liteCliPath = path.join(
+    uWorkdir,
+    "node_modules",
+    "@supabase",
+    "lite",
+    "dist",
+    "cli",
+    "index.js",
+  );
+
+  let s0: SupaliteProvisionedProject | undefined;
+  let baseline: SupaliteProvisionedProject | undefined;
+  let cProjectId: string | undefined;
+  let liteDryRunCommand: string | undefined;
+  let liteUpgradeCommand: string | undefined;
+
+  const finish = async (ok: boolean): Promise<VerifyUpgradeReport> => {
+    if (s0) await stopServer(s0).catch(() => {});
+    if (baseline) await stopServer(baseline).catch(() => {});
+    // Stop the Supabase-local stack lite left running.
+    if (existsSync(path.join(cWorkdir, "supabase", "config.toml"))) {
+      const stop = spawnManaged(supabaseBin, ["--workdir", cWorkdir, "stop", "--no-backup"], {
+        cwd: tmpdir(),
+        env: { ...process.env, ...liteEnv },
+      });
+      await stop.waitForExit().catch(() => {});
+    }
+    if (cProjectId) await forceCleanupProject(cProjectId).catch(() => {});
+    for (const d of [s0Workdir, bWorkdir, uWorkdir, cWorkdir]) cleanupWorkdir(d);
+    return {
+      format: "supadiff.verify-upgrade",
+      formatVersion: "2",
       dryRun: false,
       mutated: true,
-      plan,
+      rejectedBeforeMutation: false,
+      plan: PLAN,
       checks,
-      sourceCliVersion: source?.cliVersion,
-      destCliVersion: dest?.cliVersion,
-      destWorkdir,
+      liteDryRunCommand,
+      liteUpgradeCommand,
+      liteCliPath,
+      targets,
+      divergences: [
+        ...new Set(
+          checks
+            .filter((c) => c.status === "divergence")
+            .map((c) => DIVERGENCE_ID_BY_CHECK[c.name] ?? c.name),
+        ),
+      ],
       ok,
     };
   };
 
   try {
-    // --- source stack ---
-    log(`provisioning source stack (pg ${fromMajor})...\n`);
-    source = await scaffoldSupabaseLocalProject(
-      sourceWorkdir,
-      localConfig(fromMajor, readiness),
-      cliVersion,
+    // --- S0 bootstrap ---
+    log("S0: scaffolding supalite-sqlite-postgres source...\n");
+    s0 = await scaffoldSupaliteProject(
+      s0Workdir,
+      "sqlite-postgres",
+      supaliteConfig(readiness),
+      undefined,
     );
-    await startStack(source);
+    await applySchemaResource(s0, FIXTURE_SCHEMA);
+    await startServer(s0);
 
-    await sql(source.dbUrl, FIXTURE_SCHEMA + DATA_API_GRANTS);
-
-    const admin = createClient(source.baseUrl, source.secretKey, {
+    const anonClient = createClient(s0.baseUrl, s0.publishableKey, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
-    const email = `upgrade-owner-${Date.now()}@example.test`;
-    const password = "upgrade-pw-12345678";
-    const created = await admin.auth.admin.createUser({ email, password, email_confirm: true });
-    if (created.error) throw new Error(`source signup failed: ${created.error.message}`);
-    const ownerId = created.data.user.id;
+    const ownerEmail = `upgrade-owner-${Date.now()}@example.test`;
+    const signUp = await anonClient.auth.signUp({ email: ownerEmail, password: OWNER_PASSWORD });
+    if (signUp.error || !signUp.data.session) {
+      throw new Error(`S0 owner signUp failed: ${signUp.error?.message ?? "no session"}`);
+    }
+    const ownerId = signUp.data.user!.id;
+    const preUpgradeToken = signUp.data.session.access_token;
 
-    const signIn = await createClient(source.baseUrl, source.publishableKey, {
-      auth: { persistSession: false, autoRefreshToken: false },
-    }).auth.signInWithPassword({ email, password });
-    if (signIn.error) throw new Error(`source signin failed: ${signIn.error.message}`);
-    const preUpgradeToken = signIn.data.session.access_token;
-
-    const ownerClient = createClient(source.baseUrl, source.publishableKey, {
+    const ownerClient = createClient(s0.baseUrl, s0.publishableKey, {
       global: { headers: { Authorization: `Bearer ${preUpgradeToken}` } },
       auth: { persistSession: false, autoRefreshToken: false },
     });
@@ -299,209 +446,386 @@ export async function verifyUpgrade(options: VerifyUpgradeOptions): Promise<Veri
       .insert([
         { owner_id: ownerId, title: "kept row A" },
         { owner_id: ownerId, title: "kept row B" },
+        { owner_id: ownerId, title: "kept row C" },
       ])
       .select();
-    if (ins.error) throw new Error(`source insert failed: ${ins.error.message}`);
-    await sql(source.dbUrl, `insert into public.counters (label) values ('a'),('b'),('c');`);
+    if (ins.error) throw new Error(`S0 owned insert failed: ${ins.error.message}`);
 
-    // --- snapshot BEFORE upgrade ---
-    const snap: Snapshot = {
-      rowIds: (
-        await sql<{ id: string }>(source.dbUrl, `select id from public.todos order by title`)
-      ).map((r) => r.id),
-      sequenceLastValue: String(
-        (
-          await sql<{ last_value: string }>(
-            source.dbUrl,
-            `select last_value from public.counters_id_seq`,
-          )
-        )[0]?.last_value ?? "0",
-      ),
-      authUsers: await sql<{ id: string; email: string }>(
-        source.dbUrl,
-        `select id::text, email from auth.users order by email`,
-      ),
-      policies: await sql(
-        source.dbUrl,
-        `select policyname, cmd, qual, with_check from pg_policies where schemaname='public' order by policyname`,
-      ),
+    const service = createClient(s0.baseUrl, s0.secretKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    const seedCounters = await service
+      .from("counters")
+      .insert([{ label: "a" }, { label: "b" }, { label: "c" }, { label: "d" }])
+      .select();
+    if (seedCounters.error)
+      throw new Error(`S0 counters seed failed: ${seedCounters.error.message}`);
+
+    // --- preservation probe P0 ---
+    const p0Todos = await service.from("todos").select("id,title").order("title");
+    if (p0Todos.error) throw new Error(`P0 todo probe failed: ${p0Todos.error.message}`);
+    const p0Counters = await service
+      .from("counters")
+      .select("id")
+      .order("id", { ascending: false })
+      .limit(1);
+    if (p0Counters.error) throw new Error(`P0 counter probe failed: ${p0Counters.error.message}`);
+
+    // The fixture has exactly one Auth subject (the owner) — captured directly from the
+    // signup response, so P0 does not depend on the GoTrue admin API being reachable.
+    const snapshot: P0Snapshot = {
+      todoIds: (p0Todos.data as Array<{ id: string }>).map((r) => r.id),
+      countersMaxId: String((p0Counters.data as Array<{ id: number }>)[0]?.id ?? 0),
+      authUsers: [{ id: ownerId, email: ownerEmail }],
+      ownerId,
+      ownerEmail,
     };
+    log(
+      `P0: ${snapshot.todoIds.length} todos, counters max id ${snapshot.countersMaxId}, ` +
+        `${snapshot.authUsers.length} auth users\n`,
+    );
 
+    // --- clone S0 into B and U; close S0 ---
+    log("cloning S0 into baseline B and upgrade-source U...\n");
+    await stopServer(s0);
+    await cloneWorkdir(s0Workdir, bWorkdir);
+    await cloneWorkdir(s0Workdir, uWorkdir);
+    const bPort = await leasePort();
+    const uPort = await leasePort();
+    repointApiPort(bWorkdir, bPort);
+    repointApiPort(uWorkdir, uPort);
+    cleanupWorkdir(s0Workdir);
+    s0 = undefined;
+
+    const uConfigPath = path.join(uWorkdir, "supabase", "config.toml");
+    const uConfigHashBefore = hashFile(uConfigPath);
+
+    // --- real `lite upgrade --dry-run` from U ---
+    log("running real `lite upgrade --target local --dry-run` from U...\n");
+    const dryRunArgs = ["upgrade", "--target", "local", "--dry-run", "--no-migrate-sessions"];
+    liteDryRunCommand = `LITE_SUPABASE_CLI=${supabaseBin} node ${liteCliPath} ${dryRunArgs.join(" ")} (cwd=${uWorkdir})`;
+    const dry = await runLite(uWorkdir, dryRunArgs, liteEnv);
+    const dryOut = `${dry.stdout}\n${dry.stderr}`;
     checks.push({
-      name: "storage-preservation",
-      status: "skipped",
+      name: "lite-dry-run",
+      status:
+        dry.code === 0 && /Ready to upgrade\.|rehearsal passed/i.test(dryOut) ? "pass" : "fail",
       detail:
-        "unsupported — recorded before any Storage mutation. The pg_dump-based local upgrade " +
-        "path does not carry the Storage volume's object blobs, so Storage byte preservation " +
-        "is neither attempted nor claimed (§12).",
+        dry.code === 0
+          ? `real \`lite upgrade --dry-run\` passed readiness + in-memory pglite rehearsal`
+          : `\`lite upgrade --dry-run\` exited ${dry.code}: ${dryOut.slice(-600)}`,
+    });
+    if (dry.code !== 0) return finish(false);
+
+    if (options.injectTransitionFailure) {
+      throw new Error("injected transition failure (test): abort after a real successful dry-run");
+    }
+
+    // --- real `lite upgrade` from U into a FRESH Supabase-local stack C ---
+    log("running real `lite upgrade --target local --local-dir <C>` from U...\n");
+    const credPath = path.join(parent, `sd-l8-cred-${Date.now()}.json`);
+    const upgradeArgs = [
+      "upgrade",
+      "--target",
+      "local",
+      "--local-dir",
+      cWorkdir,
+      "--force",
+      "--no-migrate-sessions",
+      "--dump-credentials",
+      credPath,
+    ];
+    liteUpgradeCommand = `LITE_SUPABASE_CLI=${supabaseBin} node ${liteCliPath} ${upgradeArgs.join(" ")} (cwd=${uWorkdir})`;
+    const up = await runLite(uWorkdir, upgradeArgs, liteEnv);
+    const upOut = `${up.stdout}\n${up.stderr}`;
+    const upgradeOk = up.code === 0 && /Upgrade complete\./i.test(upOut);
+    checks.push({
+      name: "lite-upgrade",
+      status: upgradeOk ? "pass" : "fail",
+      detail: upgradeOk
+        ? `real \`lite upgrade\` applied schema/auth/data to a fresh Supabase-local stack`
+        : `\`lite upgrade\` exited ${up.code}: ${upOut.slice(-1200)}`,
+    });
+    if (!upgradeOk) return finish(false);
+
+    let cred: {
+      apiUrl: string;
+      dbUrl: string;
+      anonKey: string;
+      serviceRoleKey: string;
+    };
+    try {
+      cred = JSON.parse(readFileSync(credPath, "utf8")) as typeof cred;
+    } finally {
+      rmSync(credPath, { force: true });
+    }
+    cProjectId =
+      /^project_id\s*=\s*"([^"]+)"/m.exec(
+        readFileSync(path.join(cWorkdir, "supabase", "config.toml"), "utf8"),
+      )?.[1] ?? undefined;
+    destIdentity.apiUrl = cred.apiUrl;
+    destIdentity.projectId = cProjectId;
+    {
+      const ver = spawnManaged(supabaseBin, ["--version"], { cwd: tmpdir(), env: process.env });
+      await ver.waitForExit();
+      destIdentity.cliVersion = ver.stdout().trim().split("\n").pop()?.trim() ?? cliVersion;
+    }
+
+    // --- assert U not mutated in place ---
+    const uConfigHashAfter = hashFile(uConfigPath);
+    const noBak = !existsSync(path.join(uWorkdir, "supabase", "config.toml.bak"));
+    const driverIntact = /^\s*driver\s*=/m.test(readFileSync(uConfigPath, "utf8"));
+    checks.push({
+      name: "source-workdir-untouched",
+      status: uConfigHashBefore === uConfigHashAfter && noBak && driverIntact ? "pass" : "fail",
+      detail:
+        `U/supabase/config.toml unchanged: ${uConfigHashBefore === uConfigHashAfter}; ` +
+        `no config.toml.bak: ${noBak}; [db].driver intact: ${driverIntact} ` +
+        `(--local-dir keeps the in-place rewrite off the source)`,
     });
 
-    // --- dump ---
-    log(`dumping source database...\n`);
-    const pubDump = await dockerExecCapture(dbContainer(source), [
-      "pg_dump",
-      "-U",
-      "postgres",
-      "-d",
-      "postgres",
-      "--schema=public",
-      "--no-owner",
-      "--no-privileges",
-    ]);
-    if (pubDump.code !== 0) throw new Error(`pg_dump (public) failed: ${pubDump.stderr}`);
-    const authDump = await dockerExecCapture(dbContainer(source), [
-      "pg_dump",
-      "-U",
-      "postgres",
-      "-d",
-      "postgres",
-      "--data-only",
-      "--table=auth.users",
-      "--table=auth.identities",
-      "--no-owner",
-      "--no-privileges",
-    ]);
-    if (authDump.code !== 0) throw new Error(`pg_dump (auth) failed: ${authDump.stderr}`);
+    // Apply the Data API grants lite does not emit, so PostgREST can serve the table.
+    await sql(cred.dbUrl, DATA_API_GRANTS);
 
-    // --- stop source, start destination in a fresh workdir ---
-    log(`stopping source, provisioning destination stack (pg ${toMajor})...\n`);
-    await stopStack(source);
-    dest = await scaffoldSupabaseLocalProject(
-      destWorkdir,
-      localConfig(toMajor, readiness),
-      cliVersion,
-    );
-    await startStack(dest);
-
-    // --- restore ---
-    log(`restoring dump into destination...\n`);
-    const restorePub = await dockerExecStdin(
-      dbContainer(dest),
-      ["psql", "-U", "postgres", "-d", "postgres", "-v", "ON_ERROR_STOP=0", "-q"],
-      pubDump.stdout,
-    );
-    if (restorePub.code !== 0 && !/already exists/.test(restorePub.stderr)) {
-      log(`restore (public) stderr: ${restorePub.stderr}\n`);
+    // Destination actor rebind (§12 "actor reauthentication/rebind"). `lite upgrade
+    // --target local` copies the Supalite `auth.users` rows verbatim, but Supalite's
+    // users table is narrower than the CLI GoTrue's: the migrated rows land with
+    // `instance_id IS NULL` (GoTrue scopes every lookup to the zero instance) and with
+    // NULL in GoTrue's non-nullable sentinel string columns (`confirmation_token`, …),
+    // which makes GoTrue's own row scan fail ("converting NULL to string is
+    // unsupported"). Rebinding normalizes the migrated rows to the destination GoTrue's
+    // schema expectations — the zero instance and empty-string sentinels — and touches
+    // no password or session-token bytes.
+    let rebindDetail: string;
+    let rebindOk = false;
+    try {
+      await sql(
+        cred.dbUrl,
+        `do $$
+         declare col text;
+         begin
+           update auth.users set instance_id = '00000000-0000-0000-0000-000000000000'
+             where instance_id is null;
+           for col in
+             select column_name from information_schema.columns
+             where table_schema = 'auth' and table_name = 'users'
+               and data_type in ('character varying', 'text') and is_nullable = 'YES'
+               and column_name in ('confirmation_token','recovery_token','email_change_token_new',
+                 'email_change_token_current','phone_change_token','reauthentication_token',
+                 'email_change','phone_change')
+           loop
+             execute format('update auth.users set %I = '''' where %I is null', col, col);
+           end loop;
+         end $$;`,
+      );
+      rebindOk = true;
+      rebindDetail =
+        "migrated auth.users rows normalized to the CLI GoTrue schema (zero instance_id, " +
+        "empty-string token sentinels) — no password/session-token bytes touched";
+    } catch (e) {
+      rebindDetail = `rebind failed: ${String(e)}`;
     }
-    const restoreAuth = await dockerExecStdin(
-      dbContainer(dest),
-      ["psql", "-U", "postgres", "-d", "postgres", "-v", "ON_ERROR_STOP=0", "-q"],
-      `set session_replication_role = replica;\n${authDump.stdout}\nset session_replication_role = default;`,
-    );
-    if (restoreAuth.code !== 0) log(`restore (auth) stderr: ${restoreAuth.stderr}\n`);
-    await sql(dest.dbUrl, DATA_API_GRANTS);
+    checks.push({
+      name: "destination-actor-rebind",
+      status: rebindOk ? "pass" : "fail",
+      detail: rebindDetail,
+    });
 
-    // --- no session preservation ---
-    const oldTokenCheck = await createClient(dest.baseUrl, dest.publishableKey, {
+    // --- start baseline B (retained clone of S0) for the lockstep comparisons ---
+    log("starting baseline B for the lockstep comparisons...\n");
+    const bKeys = parseEnvKeys(bWorkdir);
+    baseline = {
+      workdirPath: bWorkdir,
+      backend: "sqlite-postgres",
+      port: bPort,
+      baseUrl: `http://127.0.0.1:${bPort}`,
+      publishableKey: bKeys.publishableKey,
+      secretKey: bKeys.secretKey,
+      config: supaliteConfig(readiness),
+    };
+    await startServer(baseline);
+    const bService = createClient(baseline.baseUrl, baseline.secretKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+
+    // --- probe C ---
+    const health = await fetch(`${cred.apiUrl}/auth/v1/health`, {
+      headers: { apikey: cred.anonKey },
+    }).catch(() => undefined);
+    checks.push({
+      name: "destination-probe",
+      status: health?.ok ? "pass" : "fail",
+      detail: health?.ok
+        ? `Supabase-local C is live (${cred.apiUrl})`
+        : `C did not answer at ${cred.apiUrl}/auth/v1/health`,
+    });
+
+    // --- session non-preservation ---
+    const oldTokenProbe = await createClient(cred.apiUrl, cred.anonKey, {
       global: { headers: { Authorization: `Bearer ${preUpgradeToken}` } },
       auth: { persistSession: false, autoRefreshToken: false },
     }).auth.getUser();
     checks.push({
-      name: "no-session-preservation",
-      status: oldTokenCheck.data.user ? "fail" : "pass",
-      detail: oldTokenCheck.data.user
-        ? "the pre-upgrade access token was still accepted by the new stack"
-        : "the pre-upgrade access token is rejected by the new stack (new JWT secret) — as required",
+      name: "session-non-preservation",
+      status: oldTokenProbe.data.user ? "fail" : "pass",
+      detail: oldTokenProbe.data.user
+        ? "the pre-upgrade Supalite token was still accepted by C"
+        : "the pre-upgrade Supalite token is rejected by C — migrateSessions=false, old bytes never replayed",
     });
 
-    // --- reauthentication ---
-    const reauth = await createClient(dest.baseUrl, dest.publishableKey, {
+    // --- actor reauthentication: the owner signs in again on C with the SAME
+    //     credentials (the migrated bcrypt hash is intact) and gets a brand-new
+    //     session for the same logical subject. Old token bytes are never replayed. ---
+    let reauth = await createClient(cred.apiUrl, cred.anonKey, {
       auth: { persistSession: false, autoRefreshToken: false },
-    }).auth.signInWithPassword({ email, password });
+    }).auth.signInWithPassword({ email: ownerEmail, password: OWNER_PASSWORD });
+    for (let attempt = 0; attempt < 5 && reauth.error; attempt++) {
+      await new Promise((r) => setTimeout(r, 1500));
+      reauth = await createClient(cred.apiUrl, cred.anonKey, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      }).auth.signInWithPassword({ email: ownerEmail, password: OWNER_PASSWORD });
+    }
     const newToken = reauth.data.session?.access_token;
+    const sameSubject = reauth.data.user?.id === ownerId;
     checks.push({
       name: "reauthentication",
-      status: !reauth.error && newToken && newToken !== preUpgradeToken ? "pass" : "fail",
+      status:
+        !reauth.error && newToken && newToken !== preUpgradeToken && sameSubject ? "pass" : "fail",
       detail: reauth.error
-        ? `re-signin failed: ${reauth.error.message}`
-        : "the owner re-authenticated with the same credentials and received a new session",
+        ? `re-signin on C failed: ${reauth.error.message}`
+        : `owner re-authenticated on C: ${newToken !== preUpgradeToken ? "fresh token" : "SAME TOKEN"}, ` +
+          `logical subject ${reauth.data.user?.id} ${sameSubject ? "==" : "!="} pre-upgrade ${ownerId}`,
     });
 
-    // --- ID preservation ---
-    const destRowIds = (
-      await sql<{ id: string }>(dest.dbUrl, `select id from public.todos order by title`)
-    ).map((r) => r.id);
+    // --- preservation comparison vs P0 ---
+    const destTodos = await sql<{ id: string }>(
+      cred.dbUrl,
+      "select id::text from public.todos order by title",
+    );
+    const destIds = destTodos.map((r) => r.id);
+    const idCmp = idSetPreserved(snapshot.todoIds, destIds);
     checks.push({
       name: "id-preservation",
+      status: idCmp.preserved ? "pass" : "fail",
+      detail:
+        `P0 ${JSON.stringify(snapshot.todoIds)} vs C ${JSON.stringify(destIds)} — ` +
+        `missing ${JSON.stringify(idCmp.missing)}, unexpected ${JSON.stringify(idCmp.unexpected)}`,
+    });
+
+    // deliberate corruption must be detected by the same comparison
+    const corrupted = destIds.length
+      ? [flipOneChar(destIds[0]!), ...destIds.slice(1)]
+      : ["00000000-0000-0000-0000-000000000000"];
+    const corruptionDetected = !idSetPreserved(snapshot.todoIds, corrupted).preserved;
+    checks.push({
+      name: "id-corruption-detected",
+      status: corruptionDetected ? "pass" : "fail",
+      detail: corruptionDetected
+        ? "flipping one destination row id makes the preservation check fail — the comparison is not a tautology"
+        : "a deliberately corrupted id set still passed the preservation check",
+    });
+
+    // sequence next-use behavior, lockstep B vs C: a fresh insert after the transition
+    // must land past every migrated id. B (a plain Supalite clone) does this; `lite
+    // upgrade` from a file-backed source does NOT carry the sequence position to C
+    // (SQLite introspection exposes no serial default, so lite emits no `setval`), so
+    // the next insert on C collides — a genuine, reproduced cross-target divergence.
+    const bNextRow = await bService
+      .from("counters")
+      .insert({ label: "post-transition-probe" })
+      .select("id");
+    const bNext = (bNextRow.data as Array<{ id: number }> | null)?.[0]?.id;
+    const bAdvances = bNext !== undefined && BigInt(bNext) > BigInt(snapshot.countersMaxId);
+    let cNext: string | undefined;
+    let cSeqError: string | undefined;
+    try {
+      cNext = (
+        await sql<{ id: string }>(
+          cred.dbUrl,
+          "insert into public.counters (label) values ('post-transition-probe') returning id::text",
+        )
+      )[0]?.id;
+    } catch (e) {
+      cSeqError = String(e);
+    }
+    const cAdvances = cNext !== undefined && BigInt(cNext) > BigInt(snapshot.countersMaxId);
+    checks.push({
+      name: "sequence-next-use",
+      status: bAdvances && cAdvances ? "pass" : bAdvances && !cAdvances ? "divergence" : "fail",
+      detail:
+        `P0 counters max id ${snapshot.countersMaxId}. ` +
+        `B (Supalite clone) next insert id ${String(bNext)} (${bAdvances ? "advances" : "did NOT advance"}); ` +
+        `C (after real \`lite upgrade\`) ${
+          cSeqError
+            ? `next insert FAILED: ${cSeqError.slice(0, 200)}`
+            : `next insert id ${String(cNext)} (${cAdvances ? "advances" : "COLLIDES with migrated ids"})`
+        }. ` +
+        (bAdvances && !cAdvances
+          ? "Reproduced divergence div.lite-upgrade-local-sequence-not-reset: `lite upgrade --target " +
+            "local` from a file-backed Supalite source migrates row ids but not the serial-sequence " +
+            "position, so the first post-upgrade insert collides. B is unaffected."
+          : ""),
+    });
+
+    // Auth logical subject preservation: the pre-upgrade owner uuid + email must be
+    // present unchanged in C, and the re-auth session above must resolve to that uuid.
+    const destUsers = await sql<{ id: string; email: string }>(
+      cred.dbUrl,
+      "select id::text, email from auth.users",
+    );
+    const ownerInC = destUsers.find((u) => u.id === snapshot.ownerId);
+    const authOk =
+      !!ownerInC &&
+      ownerInC.email === snapshot.ownerEmail &&
+      reauth.data.user?.id === snapshot.ownerId;
+    checks.push({
+      name: "auth-subject-preservation",
+      status: authOk ? "pass" : "fail",
+      detail:
+        `P0 owner ${snapshot.ownerId} <${snapshot.ownerEmail}>; ` +
+        `C auth.users ${JSON.stringify(destUsers)}; re-auth subject ${reauth.data.user?.id ?? "none"}`,
+    });
+
+    // --- same-behavior scenario lockstep on B and C ---
+    log("running the owner-scoped-RLS scenario lockstep on B and C...\n");
+    const bBehavior = await runOwnerRlsScenario(
+      baseline.baseUrl,
+      baseline.publishableKey,
+      ownerEmail,
+    );
+    const cBehavior = await runOwnerRlsScenario(cred.apiUrl, cred.anonKey, ownerEmail);
+    const lockstepOk =
+      bBehavior.insertOk === cBehavior.insertOk &&
+      bBehavior.insertOk &&
+      bBehavior.ownerVisibleTitles.join("|") === cBehavior.ownerVisibleTitles.join("|") &&
+      bBehavior.anonVisibleCount === cBehavior.anonVisibleCount &&
+      bBehavior.anonVisibleCount === 0;
+    checks.push({
+      name: "rls-behavior-lockstep",
+      status: lockstepOk ? "pass" : "fail",
+      detail: `B ${JSON.stringify(bBehavior)} vs C ${JSON.stringify(cBehavior)}`,
+    });
+
+    // --- baseline retained ---
+    const bDbPresent = existsSync(path.join(bWorkdir, "supabase", ".temp", "data.db"));
+    checks.push({
+      name: "baseline-retained",
       status:
-        destRowIds.length === snap.rowIds.length && destRowIds.every((v, i) => v === snap.rowIds[i])
+        bDbPresent && bBehavior.ownerVisibleTitles.length >= snapshot.todoIds.length
           ? "pass"
           : "fail",
-      detail: `snapshot ${JSON.stringify(snap.rowIds)} vs destination ${JSON.stringify(destRowIds)}`,
-    });
-
-    // --- sequence preservation ---
-    const destSeq = String(
-      (
-        await sql<{ last_value: string }>(
-          dest.dbUrl,
-          `select last_value from public.counters_id_seq`,
-        )
-      )[0]?.last_value ?? "0",
-    );
-    const nextCounter = (
-      await sql<{ id: string }>(
-        dest.dbUrl,
-        `insert into public.counters (label) values ('post-upgrade') returning id`,
-      )
-    )[0]!.id;
-    const seqOk =
-      BigInt(destSeq) >= BigInt(snap.sequenceLastValue) &&
-      BigInt(nextCounter) > BigInt(snap.sequenceLastValue);
-    checks.push({
-      name: "sequence-preservation",
-      status: seqOk ? "pass" : "fail",
-      detail: `snapshot last_value=${snap.sequenceLastValue}, destination last_value=${destSeq}, next insert id=${nextCounter} (must not collide with preserved rows)`,
-    });
-
-    // --- Auth preservation ---
-    const destUsers = await sql<{ id: string; email: string }>(
-      dest.dbUrl,
-      `select id::text, email from auth.users order by email`,
-    );
-    const authOk =
-      destUsers.length === snap.authUsers.length &&
-      destUsers.every(
-        (u, i) => u.id === snap.authUsers[i]!.id && u.email === snap.authUsers[i]!.email,
-      );
-    checks.push({
-      name: "auth-preservation",
-      status: authOk ? "pass" : "fail",
-      detail: `snapshot ${JSON.stringify(snap.authUsers)} vs destination ${JSON.stringify(destUsers)}`,
-    });
-
-    // --- RLS preservation (structural + functional) ---
-    const destPolicies = await sql<Snapshot["policies"][number]>(
-      dest.dbUrl,
-      `select policyname, cmd, qual, with_check from pg_policies where schemaname='public' order by policyname`,
-    );
-    const policiesStructural =
-      JSON.stringify(destPolicies) === JSON.stringify(snap.policies) && destPolicies.length >= 2;
-    let functionalOk = false;
-    if (newToken) {
-      const ownerSees = await createClient(dest.baseUrl, dest.publishableKey, {
-        global: { headers: { Authorization: `Bearer ${newToken}` } },
-        auth: { persistSession: false, autoRefreshToken: false },
-      })
-        .from("todos")
-        .select("*");
-      const anonSees = await createClient(dest.baseUrl, dest.publishableKey, {
-        auth: { persistSession: false, autoRefreshToken: false },
-      })
-        .from("todos")
-        .select("*");
-      functionalOk =
-        !ownerSees.error &&
-        (ownerSees.data?.length ?? 0) === snap.rowIds.length &&
-        !anonSees.error &&
-        (anonSees.data?.length ?? 0) === 0;
-    }
-    checks.push({
-      name: "rls-preservation",
-      status: policiesStructural && functionalOk ? "pass" : "fail",
       detail:
-        `pg_policies preserved: ${policiesStructural} (${destPolicies.length} policies); ` +
-        `functional: owner sees own rows / anon denied = ${functionalOk}`,
+        `baseline B db file present: ${bDbPresent}; B still serves the pre-upgrade rows ` +
+        `(${bBehavior.ownerVisibleTitles.length} >= ${snapshot.todoIds.length})`,
+    });
+
+    // --- Storage: skipped (was not required) ---
+    checks.push({
+      name: "storage-preservation",
+      status: "skipped",
+      detail:
+        "unsupported — `lite upgrade` does not carry Storage and the local target runs no storage-api. " +
+        "Not required by this workflow; if it were, it would have been rejected before mutation.",
     });
 
     const ok = checks.every((c) => c.status !== "fail");
@@ -509,12 +833,58 @@ export async function verifyUpgrade(options: VerifyUpgradeOptions): Promise<Veri
   } catch (err) {
     checks.push({ name: "flow", status: "fail", detail: `verify-upgrade aborted: ${String(err)}` });
     return finish(false);
-  } finally {
-    try {
-      rmSync(sourceWorkdir, { recursive: true, force: true, maxRetries: 2 });
-      rmSync(destWorkdir, { recursive: true, force: true, maxRetries: 2 });
-    } catch {
-      /* already cleaned by finish() */
-    }
   }
+}
+
+function flipOneChar(id: string): string {
+  const chars = [...id];
+  const i = chars.findIndex((c) => /[0-9a-f]/i.test(c));
+  if (i === -1) return id + "x";
+  chars[i] = chars[i] === "0" ? "1" : "0";
+  return chars.join("");
+}
+
+interface OwnerRlsBehavior {
+  insertOk: boolean;
+  ownerVisibleTitles: string[];
+  anonVisibleCount: number;
+}
+
+/**
+ * The same behavior scenario run against any target: the owner signs in, inserts a
+ * new owned row, then owner and anon each read `public.todos`. Owner-scoped RLS must
+ * show the owner every owned row and the anon none.
+ */
+async function runOwnerRlsScenario(
+  baseUrl: string,
+  anonKey: string,
+  ownerEmail: string,
+): Promise<OwnerRlsBehavior> {
+  const signIn = await createClient(baseUrl, anonKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  }).auth.signInWithPassword({ email: ownerEmail, password: OWNER_PASSWORD });
+  const token = signIn.data.session?.access_token;
+  const ownerId = signIn.data.user?.id;
+  if (!token || !ownerId) {
+    return { insertOk: false, ownerVisibleTitles: [], anonVisibleCount: -1 };
+  }
+  const owner = createClient(baseUrl, anonKey, {
+    global: { headers: { Authorization: `Bearer ${token}` } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const ins = await owner
+    .from("todos")
+    .insert([{ owner_id: ownerId, title: "lockstep row" }])
+    .select();
+  const ownerSees = await owner.from("todos").select("title").order("title");
+  const anonSees = await createClient(baseUrl, anonKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  })
+    .from("todos")
+    .select("title");
+  return {
+    insertOk: !ins.error,
+    ownerVisibleTitles: (ownerSees.data ?? []).map((r: { title: string }) => r.title).sort(),
+    anonVisibleCount: anonSees.error ? -1 : (anonSees.data?.length ?? -1),
+  };
 }

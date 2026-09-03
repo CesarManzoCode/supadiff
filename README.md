@@ -10,8 +10,8 @@ This repository implements Implementation DAG layers **L0-L12** of the
 Architecture Contract: the deterministic comparison core (L0-L5, proven
 against fake targets), a real Supalite target family (L6), a real
 `supabase-local` target driver + Supalite ↔ Supabase-local peer comparison
-(L7), local Supabase upgrade verification (L8, `supadiff verify-upgrade`), a
-dogfood fault lab and replay (L9), a state-aware reducer (L10), Storage peer
+(L7), Supalite → real `lite upgrade` → Supabase-local upgrade verification
+(L8, `supadiff verify-upgrade`), a dogfood fault lab and replay (L9), a state-aware reducer (L10), Storage peer
 comparison including Supalite ↔ Supabase-local (L11), and seeded scenario
 generation (L12). "Real" throughout this document means the exact-pinned
 `@supabase/lite@0.9.0` package and/or a real Supabase stack brought up by the
@@ -45,10 +45,19 @@ they were implemented in full:
   drivers, sharing the entire `@supabase/supabase-js@2.97.0` per-operation
   dispatch with them.
 - **`supadiff verify-upgrade`** (`packages/targets/src/supabase-local/
-upgrade.ts`): mandatory dry-run, then a real Postgres 15 → 17 local upgrade
-  into a fresh workdir, verifying ID / sequence / Auth / RLS preservation and
-  that sessions are _not_ preserved (re-authentication required). Storage
-  preservation is recorded unsupported before any mutation.
+upgrade.ts`): mandatory dry-run, then the real Architecture Contract §12
+  transition — a file-backed `supalite-sqlite-postgres` project is cloned
+  into a retained **baseline B** and an **upgrade-source U**, then the real
+  `lite upgrade --target local` (`@supabase/lite@0.9.0`) migrates U into a
+  **fresh Supabase-local stack C**. Verifies: source workdir untouched,
+  baseline retained, row IDs + Auth logical subject preserved, deliberate
+  corruption detected, sessions _not_ preserved + the actor re-authenticates
+  for the same subject, RLS behavior lockstep B vs C. The serial-sequence
+  position is **not** carried by `lite upgrade` from a file-backed source
+  (registered divergence `div.lite-upgrade-local-sequence-not-reset`);
+  Storage preservation is unsupported and is **rejected before any mutation**
+  when required. The old Postgres 15→17 `pg_dump` helper is removed — it was
+  never §12.
 
 ## One real command against a fake target
 
@@ -83,11 +92,11 @@ pnpm test:fault-lab:reduce                # L10: state-aware reducer
 
 # Real supabase-local stack (pinned `supabase` CLI 2.116.0 over Docker) — needs Docker
 pnpm test:integration:peer-data-auth-rls  # L7: Supalite <-> supabase-local (Data+Auth+RLS) + failure modes
-pnpm test:integration:upgrade-local       # L8: supadiff verify-upgrade, real Postgres 15 -> 17
+pnpm test:integration:upgrade-local       # L8: verify-upgrade, real Supalite -> lite upgrade -> supabase-local
 pnpm test:integration:peer-storage        # L11: Supalite x2 and Supalite <-> supabase-local Storage
 
-supadiff verify-upgrade --from 15 --to 17            # L8 dry-run (prints the §12 flow, mutates nothing)
-supadiff verify-upgrade --from 15 --to 17 --execute  # L8 real upgrade verification
+supadiff verify-upgrade             # L8 dry-run (prints the §12 workflow, mutates nothing)
+supadiff verify-upgrade --execute   # L8 real transition: Supalite -> lite upgrade -> supabase-local
 ```
 
 Every one of these talks to a real target over real HTTP via the real
@@ -126,12 +135,12 @@ packages/
   spec/        canonical types, JSON Schemas, RFC 8785 canonicalization, operation catalog
   engine/      planning, lockstep execution, redaction, comparator, artifact assembly
   targets/     concrete target drivers — real Supalite family (L6), real supabase-local (L7),
-               shared REST dispatch, local upgrade verification (L8)
+               shared REST dispatch, Supalite -> lite upgrade -> supabase-local verification (L8)
   reducer/     state-aware reduction (L10) — ddmin over the dependency graph, acceptance oracle
   generators/  seeded scenario generation (L12) — fast-check adapter, Data+Auth+RLS domain model
   cli/         supadiff CLI: run / compare / inspect / replay / reduce / verify-upgrade
 scenarios/deterministic/              canonical L6/L7/L11 scenario fixtures
-divergences/active/                   known-divergence registry (the signedUrl/signedURL entries)
+divergences/active/                   known-divergence registry (signedUrl/signedURL + the L8 lite-upgrade sequence entry)
 test/fixtures/, test/fault-lab/       the L0-L5 acceptance fixtures and the L9 dogfood fault lab
 docs/                                  see below
 ```
@@ -155,10 +164,14 @@ SupaDiff's README **does not** claim:
 
 - Real Supabase (hosted) comparison works (L13 — out of scope for this sprint;
   `parseTargetSpec` still rejects `supabase-hosted`)
-- The full Architecture Contract §12 upgrade surface is covered — L8 verifies
-  a **local** Postgres major-version upgrade (ID/sequence/Auth/RLS
-  preservation, no session preservation); Storage byte preservation across
-  the upgrade is explicitly recorded `unsupported`
+- The full Architecture Contract §12 upgrade surface is covered — L8 runs the
+  real `lite upgrade --target local` transition (Supalite → Supabase-local)
+  and verifies row-ID + Auth-subject preservation, session non-preservation +
+  actor reauthentication, and RLS behavior lockstep. The serial-sequence
+  position is **not** carried by `lite upgrade` from a file-backed source
+  (registered divergence, not papered over); Storage byte preservation is
+  `unsupported` and is rejected before any mutation when required; hosted
+  (`--target hosted`) upgrades are not exercised
 - A generic fuzzing framework or generic database reducer exists — L10's
   reducer and L12's generator are both scoped to SupaDiff's own domain model
   (Data+Auth+RLS scenarios), not general-purpose tools

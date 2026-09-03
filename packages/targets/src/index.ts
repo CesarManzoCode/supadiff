@@ -47,11 +47,12 @@ export {
 } from "./supabase-local/provision.js";
 export { SupabaseLocalTargetSession } from "./supabase-local/session.js";
 
-// L8: local Supabase upgrade verification (§12).
+// L8: Supalite → real `lite upgrade` → Supabase-local upgrade verification (§12).
 export {
   verifyUpgrade,
   type VerifyUpgradeOptions,
   type VerifyUpgradeReport,
   type UpgradeCheck,
   type UpgradeCheckStatus,
+  type UpgradeTargetIdentity,
 } from "./supabase-local/upgrade.js";

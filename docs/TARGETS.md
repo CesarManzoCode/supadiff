@@ -96,8 +96,10 @@ so the peer comparison measures the target, not the driver.
   **2.116.0** (integrity recorded in `src/shared/supabase-cli-cache.ts`) and
   installed once per process into a shared cache. A CLI release hard-codes
   its service image tags, so pinning the CLI pins the stack: postgres
-  `17.6.1.165` (and `15.8.1.085` as the L8 upgrade source), gotrue
-  `v2.196.0`, postgrest `v16.1`, storage-api `v1.70.3`, kong `2.8.1`.
+  `17.6.1.165`, gotrue `v2.196.0`, postgrest `v16.1`, storage-api `v1.70.3`,
+  kong `2.8.1`. (L8's `lite upgrade --target local` path pins its own
+  destination stack at `db.major_version = 15`, image `15.8.1.085`, and adds
+  `studio` + `postgres-meta`.)
   `TargetIdentity` reports `cliVersion`, `serviceVersions`, and the real
   `sha256:` `containerDigests` observed after `supabase start`.
 - **Isolation:** each stack gets a fresh workdir, a unique `project_id`
@@ -127,18 +129,56 @@ production service images, not an embedded re-implementation.
 capital-`signedURL` key the official client expects) — the exact opposite of
 Supalite 0.9.0; see `docs/DIVERGENCES.md`.
 
-## Local upgrade verification (L8)
+## Supalite → Supabase upgrade verification (L8)
 
 `packages/targets/src/supabase-local/upgrade.ts` + `supadiff verify-upgrade`.
-A mandatory dry-run prints the 19-step §12 flow and exits without
-provisioning anything. With `--execute`: a source stack at Postgres `--from`
-(default 15), fixture schema + owner + rows + sequence, a pre-upgrade
-snapshot (row ids, sequence `last_value`, `auth.users`, `pg_policies`), a
-`pg_dump`, then a **fresh destination workdir** with a stack at Postgres
-`--to` (default 17) and a restore. Source and destination run sequentially.
-Verified: the pre-upgrade access token is rejected (no session preservation),
-re-authentication with the same credentials yields a new session, and row
-IDs / sequence values / `auth.users` / RLS policies are preserved
-structurally and functionally. Storage preservation is recorded `skipped`
-(unsupported) before any Storage mutation. Exit codes: 0 (verified/dry-run),
-10 (a preservation check failed), 20 (the flow aborted).
+A mandatory dry-run prints the §12 workflow and exits without provisioning
+anything. With `--execute` it runs the real transition the Architecture
+Contract §12 defines:
+
+1. **S0 bootstrap** — a file-backed `supalite-sqlite-postgres` project (the
+   only Supalite backend that both supports Auth/RLS and can be cloned by a
+   plain workdir copy), fixture schema (todos + owner-scoped RLS, a
+   `bigserial` counter), owner signup, owned rows, a captured pre-upgrade
+   access token.
+2. **preservation probe P0** — todo row ids, counters max id, the owner
+   uuid + email.
+3. **clone** S0 into a retained **baseline B** and an **upgrade-source U**
+   (workdir file copy, pinned package re-linked, fresh ports), then **close
+   S0** — the source is never mutated in place.
+4. **real `lite upgrade --target local --dry-run`** from U (`@supabase/lite`
+   **0.9.0**, exact-pinned) — readiness + in-memory PGlite rehearsal.
+5. **real `lite upgrade --target local --local-dir <C> --force
+--no-migrate-sessions`** from U — the pinned `supabase` CLI (2.116.0,
+   pointed at via `LITE_SUPABASE_CLI`) brings up a **fresh Supabase-local
+   stack C** and lite applies schema / `auth.users` / `auth.identities` /
+   user data to it. `--local-dir` keeps the in-place `config.toml` rewrite
+   off U (asserted: byte-identical, no `.bak`, `[db].driver` intact).
+6. **destination actor rebind** — the migrated `auth.users` rows are
+   normalized to the CLI GoTrue schema (zero `instance_id`, empty-string
+   token sentinels; no password or session-token bytes touched), because
+   Supalite's users table is narrower than GoTrue's.
+7. **session non-preservation** — the pre-upgrade Supalite token is rejected
+   by C (`migrateSessions = false`, JWT secret not migrated).
+8. **actor reauthentication** — the owner signs in again on C with the same
+   credentials (the migrated bcrypt hash is intact) → a brand-new session
+   for the **same logical subject** (uuid preserved).
+9. **preservation comparison vs P0** — destination row ids preserved; a
+   deliberately corrupted id set is detected; owner uuid + email preserved.
+10. **sequence next-use, lockstep B vs C** — B (a plain Supalite clone)
+    advances past the migrated ids; C does not (`lite upgrade` from a
+    file-backed source does not carry the serial-sequence position — a
+    registered divergence, `div.lite-upgrade-local-sequence-not-reset`,
+    reported as `sequence-next-use = divergence`, not a failure).
+11. **same-behavior RLS scenario lockstep on B and C** — owner sees own
+    todos, anon sees none; the outcomes must agree.
+12. **cleanup** — stop C (pinned `supabase stop --no-backup` +
+    `forceCleanupProject`) and B, remove every workdir. Baseline B is
+    retained until this step.
+
+Storage preservation is **`skipped` (unsupported)** — `lite upgrade` carries
+no Storage and the local target runs no `storage-api`; when a caller passes
+`--require-storage` it is **rejected before S0 is even bootstrapped**, never
+run-then-skipped. The old Postgres 15→17 `pg_dump` helper is **removed** — it
+was never §12. Exit codes: 0 (verified / dry-run), 10 (a check failed or a
+required-Storage rejection), 20 (the flow aborted).

@@ -87,6 +87,30 @@ a separate entry would be added if a scenario exercises those as the
 candidate. The Supalite capability record `storage.signed-url.redeem =
 unsupported` is unchanged.
 
+## Active entries: `lite upgrade --target local` drops the serial-sequence position
+
+`divergences/active/lite-upgrade-local-sequence-not-reset.json` — found by L8
+(`supadiff verify-upgrade`). `@supabase/lite@0.9.0`'s local-upgrade data phase
+only emits `SELECT setval(pg_get_serial_sequence(...))` for a column whose live
+introspection shows a `nextval(` default or a literal `serial`/`bigserial`
+type. When the upgrade **source** is a file-backed Supalite target
+(`supalite-sqlite-postgres`), the underlying SQLite introspection exposes
+neither — the deparse cache records a `bigserial` column as
+`isSerial:false, defaultValue:null` — so `lite upgrade` migrates the row IDs
+(`id 1..N`) but leaves the destination sequence at its start value. The first
+post-upgrade `INSERT … (label) VALUES (…)` on the Supabase-local destination
+then draws `nextval` = 1 and fails with `duplicate key value violates unique
+constraint`. A plain Supalite clone of the same source (baseline B) is
+unaffected: its next insert lands at `N+1`.
+
+`verify-upgrade` records this as check `sequence-next-use = divergence` (it does
+**not** fail the run) and surfaces `div.lite-upgrade-local-sequence-not-reset`
+in the report's `divergences[]`. Realigning the sequence is left to the
+operator: `SELECT setval(pg_get_serial_sequence('public.<table>','id'), (SELECT
+max(id) FROM public.<table>))`. `UPGRADE.md`'s "Sequence resets after all
+migrated user data has been inserted" holds for `pglite`/`postgres` sources,
+not for the file-backed `sqlite`/`sqlite-postgres` ones.
+
 ## Directory convention
 
 `divergences/active/*.json` — loaded by the CLI (`--divergences <dir>`,

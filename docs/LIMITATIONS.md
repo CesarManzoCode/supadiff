@@ -8,9 +8,9 @@ result from this repository.
 Implemented and tested against real evidence: the deterministic comparison
 core (L0-L5, proven against fake targets), the Supalite target family (L6,
 all four backends, real `@supabase/lite@0.9.0`), the real `supabase-local`
-target driver and Supalite ↔ Supabase-local peer comparison (L7), local
-Supabase upgrade verification (L8, `supadiff verify-upgrade`), the dogfood
-fault lab and `replay` command (L9), the state-aware reducer and `reduce`
+target driver and Supalite ↔ Supabase-local peer comparison (L7), Supalite →
+real `lite upgrade` → Supabase-local upgrade verification (L8, `supadiff
+verify-upgrade`), the dogfood fault lab and `replay` command (L9), the state-aware reducer and `reduce`
 command (L10), Storage peer comparison including Supalite ↔ Supabase-local
 (L11), and seeded scenario generation (L12).
 
@@ -41,17 +41,25 @@ Docker works normally (`docker pull hello-world` → PASS).
     against both real stacks, and every compared observable path agrees.
 - **L8** (`packages/targets/src/supabase-local/upgrade.ts`, `supadiff
 verify-upgrade`, `pnpm test:integration:upgrade-local`): a mandatory
-  dry-run, then a real Postgres 15 → 17 local upgrade (pg*dump → fresh
-  destination stack in a new workdir → restore). Verified: ID / sequence /
-  Auth / RLS preservation, no session preservation (the pre-upgrade token is
-  rejected), re-authentication with the same credentials yields a new
-  session, and Storage preservation is recorded `unsupported` \_before* any
-  Storage mutation. `verify-upgrade` is no longer a not-implemented stub.
+  dry-run, then the real Architecture Contract §12 transition — a file-backed
+  `supalite-sqlite-postgres` project cloned into a retained **baseline B**
+  and an **upgrade-source U**, then the real `lite upgrade --target local`
+  (`@supabase/lite@0.9.0`, driven at the pinned `supabase` CLI 2.116.0 via
+  `LITE_SUPABASE_CLI`) migrating U into a **fresh Supabase-local stack C**.
+  Verified: source workdir untouched, baseline retained, row IDs + Auth
+  logical subject preserved, deliberate corruption detected, no session
+  preservation (the pre-upgrade token is rejected), the actor
+  **re-authenticates** for the same subject, RLS behavior lockstep B vs C.
+  The serial-sequence position is **not** carried by `lite upgrade` from a
+  file-backed source (`div.lite-upgrade-local-sequence-not-reset`, reported
+  `sequence-next-use = divergence`); Storage preservation is `unsupported`
+  and is **rejected before any mutation** when `--require-storage` is passed.
+  The old Postgres 15→17 `pg_dump` helper was **removed** — it was never §12.
 
-Exact versions: supabase CLI 2.116.0; images postgres 17.6.1.165 (and
-15.8.1.085 for the upgrade source), gotrue v2.196.0, postgrest v16.1,
-storage-api v1.70.3, kong 2.8.1 — real `sha256:` container digests recorded
-in `TargetIdentity.containerDigests`, see `docs/TARGETS.md`.
+Exact versions: `@supabase/lite` 0.9.0; supabase CLI 2.116.0; the CLI stack
+`lite upgrade --target local` brings up pins postgres 15.8.1.085 (its own
+`db.major_version = 15`), gotrue v2.196.0, postgrest v16.1, plus studio and
+postgres-meta.
 
 ## What L6-L12 actually proved, precisely
 
@@ -72,18 +80,30 @@ smoke` (schema+RLS, signup, owner-authorized insert, session read,
   concurrent provisions get distinct project ids and ports; teardown +
   `forceCleanupProject` remove every container and network.
 - **L8** (`packages/targets/src/supabase-local/upgrade.ts`, `supadiff
-verify-upgrade`, `pnpm test:integration:upgrade-local`): a real local
-  Postgres 15 → 17 upgrade. Mandatory dry-run first (19-step plan, nothing
-  provisioned). Then: source stack at pg 15, fixture applied, owner signed
-  up, rows inserted, sequence advanced; snapshot of row ids / sequence
-  `last_value` / `auth.users` / `pg_policies`; `pg_dump`; **fresh destination
-  workdir**, stack at pg 17, restore. Verified — the pre-upgrade access token
-  is **rejected** by the new stack (no session preservation), the owner
-  **re-authenticates** with the same credentials and gets a new session, and
-  row IDs / sequence values / `auth.users` / RLS policies are all preserved
-  (structurally and functionally: owner sees own rows, anon denied). Storage
-  preservation is recorded `skipped` (unsupported) _before_ any Storage
-  mutation.
+verify-upgrade`, `pnpm test:integration:upgrade-local`): the real
+  Architecture Contract §12 transition. Mandatory dry-run first (workflow
+  plan, nothing provisioned). Then: a file-backed `supalite-sqlite-postgres`
+  project bootstrapped (fixture schema + owner + owned rows + `bigserial`
+  counter), probe **P0** (row ids, counters max id, owner uuid/email), the
+  workdir **cloned** into a retained **baseline B** and an **upgrade-source
+  U**, S0 closed. Real `lite upgrade --target local --dry-run` (readiness +
+  PGlite rehearsal), then real `lite upgrade --target local --local-dir <C>
+  --force --no-migrate-sessions` into a **fresh Supabase-local stack C**.
+  Verified — U's `config.toml` byte-identical / no `.bak` (source not
+  mutated in place); baseline B retained and still serving the pre-upgrade
+  rows; migrated `auth.users` rebound to the CLI GoTrue schema (zero
+  `instance_id`, empty token sentinels — no password/token bytes touched);
+  the pre-upgrade token is **rejected** by C (no session preservation); the
+  owner **re-authenticates** on C with the same credentials for the **same
+  logical subject**; destination row ids preserved and a deliberately
+  corrupted id set detected; RLS behavior lockstep on B and C (owner sees own
+  rows, anon denied). **Divergence found:** `lite upgrade` from a file-backed
+  source migrates row ids but not the serial-sequence position, so the first
+  post-upgrade insert on C collides while the same insert on B advances
+  cleanly (`div.lite-upgrade-local-sequence-not-reset`, reported
+  `sequence-next-use = divergence`, not a failure). Storage preservation is
+  `unsupported` — **rejected before any mutation** when `--require-storage`
+  is passed, never run-then-skipped.
 - **L6** (`packages/targets/src/supalite/`, `pnpm test:integration:supalite`):
   a real `lite start` subprocess, real `@supabase/supabase-js@2.97.0`
   traffic, on all four `supalite-*` backends. Found and reproduced a real
@@ -223,7 +243,7 @@ out at its point of implementation with a contract section reference:
 
 **SupaDiff's deterministic comparison core, real Supalite target family,
 real `supabase-local` target driver, Supalite ↔ Supabase-local peer
-comparison (Data + Auth + RLS + Storage), local upgrade verification, fault
-lab/replay, reducer, and scenario generation are implemented and proven with
-real evidence. A hosted target (L13) and a documentation/release evidence
+comparison (Data + Auth + RLS + Storage), Supalite → real `lite upgrade` →
+Supabase-local upgrade verification, fault lab/replay, reducer, and scenario
+generation are implemented and proven with real evidence. A hosted target (L13) and a documentation/release evidence
 gate (L14) are not implemented — they were out of scope for this sprint.**

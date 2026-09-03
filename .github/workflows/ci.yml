@@ -118,7 +118,7 @@ jobs:
       - name: L7 — Supalite <-> supabase-local peer (Data + Auth + RLS) + failure modes
         run: pnpm test:integration:peer-data-auth-rls
 
-      - name: L8 — verify-upgrade (local Postgres 15 -> 17)
+      - name: L8 — verify-upgrade (Supalite -> real `lite upgrade` -> supabase-local)
         run: pnpm test:integration:upgrade-local
 
       - name: L11 — Storage peer comparison (Supalite x2 and Supalite <-> supabase-local)
