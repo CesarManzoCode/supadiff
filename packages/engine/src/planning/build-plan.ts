@@ -108,6 +108,9 @@ export function buildExecutionPlan(input: BuildExecutionPlanInput): ExecutionPla
   const scenarioDigest = computeScenarioDigest(input.scenario);
   const policyDigest = sha256OfCanonicalJson(input.policy as never);
 
+  // Canonical target order (§5.2): reference first, then candidates in a deterministic
+  // (lexicographic-by-slot) order — never the insertion order of the `targets` array or a
+  // Map, so lockstep execution cannot silently depend on caller/iteration order.
   const targetSlots: ResolvedTargetSlot[] = input.targets
     .map((t) => ({
       slot: t.slot,
@@ -115,7 +118,10 @@ export function buildExecutionPlan(input: BuildExecutionPlanInput): ExecutionPla
       role: t.role,
       identity: t.identity!,
     }))
-    .sort((a, b) => a.slot.localeCompare(b.slot));
+    .sort((a, b) => {
+      if (a.role !== b.role) return a.role === "reference" ? -1 : 1;
+      return a.slot.localeCompare(b.slot);
+    });
 
   // Step requirements are resolved exactly once here, during planning, from each target's
   // frozen declared/probed capabilities (§2.8, §3.5) — never re-decided by the executor.

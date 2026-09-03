@@ -397,6 +397,52 @@ describe("ExecutionPlan: the frozen plan is the scheduling authority, not Scenar
     expect(startedOrder).toEqual(plan.orderedSteps.map((s) => s.stepId));
   });
 
+  it("target order comes from plan.targetSlots (reference-first, canonical) — not from Map insertion order or lexicographic slot naming", async () => {
+    const flatScript = baseScript({
+      steps: {
+        "step.signup": { category: "success", status: 200, body: { id: "owner-abc-123" } },
+        "step.select": {
+          category: "success",
+          status: 200,
+          body: { status: "success", rows: [{ id: 1 }] },
+        },
+      },
+    });
+    // Deliberately reverse-lexicographic slot names, so a naive `.sort()` on slot alone (or an
+    // accidental dependency on `perTarget`'s Map insertion order) would put the candidate first.
+    const driver = new FakeTargetDriver({ ref: flatScript, cand: flatScript });
+    const scenario = twoStepScenario();
+    const result = await runScenario(
+      scenario,
+      [
+        { slot: "z-reference", spec: fakeTargetSpec("z-reference", "ref"), driver },
+        { slot: "a-candidate", spec: fakeTargetSpec("a-candidate", "cand"), driver },
+      ],
+      { clock: fixedClock() },
+    );
+    expect(result.state).toBe("complete");
+
+    expect(result.plan!.targetSlots.map((t) => `${t.role}:${t.slot}`)).toEqual([
+      "reference:z-reference",
+      "candidate:a-candidate",
+    ]);
+
+    const globalStepStartedOrder = [
+      ...result.targets.get("z-reference")!.events,
+      ...result.targets.get("a-candidate")!.events,
+    ]
+      .filter((e) => e.kind === "step-started")
+      .sort((a, b) => a.at.localeCompare(b.at))
+      .map((e) => `${(e as { stepId: string }).stepId}/${e.targetSlot}`);
+
+    expect(globalStepStartedOrder).toEqual([
+      "step.signup/z-reference",
+      "step.signup/a-candidate",
+      "step.select/z-reference",
+      "step.select/a-candidate",
+    ]);
+  });
+
   it("a step's $ref/capture placeholder is frozen into the plan untouched — planning never resolves capture values", () => {
     const scenario = twoStepScenario();
     const plan = buildExecutionPlan({

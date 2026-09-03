@@ -328,13 +328,15 @@ export async function runScenario(
     }
 
     // --- executing: lockstep by logical step, driven by the frozen plan (§5.1) ---
-    // From here on the frozen plan is the scheduling authority: step order, dependencies,
-    // and each step's per-target capability disposition all come from `plan.orderedSteps`,
-    // not from `scenario.steps` or a fresh `resolveCapability` call.
+    // From here on the frozen plan is the scheduling authority: step order, target order,
+    // dependencies, and each step's per-target capability disposition all come from the plan
+    // (`plan.orderedSteps`, `plan.targetSlots`), never from `scenario.steps`, the `Map`
+    // insertion order of `perTarget`, or the original `targets` array order.
     const blockedSteps = new Set<StableId>();
     for (const step of plan.orderedSteps) {
       const dependenciesBlocked = step.dependsOn.some((d) => blockedSteps.has(d));
-      for (const ctx of perTarget.values()) {
+      for (const slot of plan.targetSlots) {
+        const ctx = perTarget.get(slot.slot)!;
         if (ctx.lost) {
           ctx.attempts.push({ stepId: step.stepId, attempt: 1, status: "target-lost" });
           continue;
