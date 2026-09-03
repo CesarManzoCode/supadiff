@@ -45,7 +45,20 @@ export function spawnManaged(
   child.stderr?.on("data", (c: Buffer) => boundedAppend(errBuf, c));
 
   const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
-    child.on("exit", (code, signal) => resolve({ code, signal }));
+    let settled = false;
+    const done = (v: { code: number | null; signal: NodeJS.Signals | null }): void => {
+      if (settled) return;
+      settled = true;
+      resolve(v);
+    };
+    child.on("exit", (code, signal) => done({ code, signal }));
+    // A spawn that fails asynchronously (ENOENT, EACCES, …) emits 'error' and never 'exit';
+    // without this listener that becomes an unhandled exception that can crash the process.
+    // Surface it through the same exit promise as a non-zero code instead.
+    child.on("error", (err) => {
+      boundedAppend(errBuf, Buffer.from(`spawn error: ${String(err)}`));
+      done({ code: -1, signal: null });
+    });
   });
 
   async function kill(): Promise<void> {

@@ -241,9 +241,9 @@ export async function verifyUpgrade(options: VerifyUpgradeOptions): Promise<Veri
   let dest: SupabaseLocalProvisionedProject | undefined;
 
   const finish = async (ok: boolean): Promise<VerifyUpgradeReport> => {
-    if (dest) await stopStack(dest).catch(() => {});
+    if (dest?.started) await stopStack(dest).catch(() => {});
     if (dest) await forceCleanupProject(dest.projectId).catch(() => {});
-    if (source) await stopStack(source).catch(() => {});
+    if (source?.started) await stopStack(source).catch(() => {});
     if (source) await forceCleanupProject(source.projectId).catch(() => {});
     cleanupWorkdir(sourceWorkdir);
     cleanupWorkdir(destWorkdir);

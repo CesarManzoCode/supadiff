@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from "node:fs";
 import { randomBytes } from "node:crypto";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import type { ExactRuntimeIdentity } from "@supadiff/spec";
 import { leasePort } from "../shared/ports.js";
@@ -69,7 +70,10 @@ function runCli(
   extraEnv: NodeJS.ProcessEnv = {},
 ): ReturnType<typeof spawnManaged> {
   return spawnManaged(project.cliBin, ["--workdir", project.workdirPath, ...args], {
-    cwd: project.workdirPath,
+    // `--workdir` tells the CLI where the project is; `cwd` only needs to be a directory
+    // that exists — never the project workdir itself, which may already be mid-teardown
+    // when a late `stop` runs (a non-existent cwd makes `spawn` fail with ENOENT).
+    cwd: tmpdir(),
     env: {
       ...process.env,
       ...extraEnv,
