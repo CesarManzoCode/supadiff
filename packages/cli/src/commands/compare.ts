@@ -34,8 +34,22 @@ export async function compareCommand(args: ParsedArgs): Promise<number> {
     return EXIT_INVALID;
   }
   if (!pathB) {
-    // Single-artifact mode: re-render an existing comparison artifact's results offline.
+    // Single-artifact mode: re-render an existing *comparison* artifact's results offline.
+    // A bare run artifact (single target, no candidate — `manifest.artifactKind === "run"`)
+    // always carries a `comparison/results.json`, but it is an empty array by construction
+    // (§14.1: "one target produces a run artifact without comparison"). Silently returning
+    // that empty array as if it were a real comparison would be a false "success with empty
+    // results" — so this distinguishes run-artifact input from comparison-artifact input and
+    // fails closed with an explicit, distinguishing error instead.
     const artifact = await readRunArtifact(pathA);
+    if (artifact.manifest.artifactKind !== "comparison") {
+      process.stderr.write(
+        `supadiff compare: "${pathA}" is a "${artifact.manifest.artifactKind}" artifact, not a ` +
+          `comparison artifact — it has no comparison to re-render. Pass a second run artifact to ` +
+          `compare it against one, or point at an artifact produced by a multi-target "run".\n`,
+      );
+      return EXIT_INVALID;
+    }
     const resultsPath = "comparison/results.json";
     if (!artifact.files.has(resultsPath)) {
       process.stderr.write(

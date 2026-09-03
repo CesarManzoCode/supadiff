@@ -103,7 +103,12 @@ export async function runCommand(args: ParsedArgs): Promise<number> {
   let policy;
   let knownDivergences;
   try {
-    policy = await loadPolicy(args.flags.policy, scenario);
+    // The comparison policy MUST be resolved and validated against a multi-target run's
+    // declared scenario.comparison before any target is provisioned (§8B): never provision
+    // first and discover there is no usable policy afterward.
+    policy = await loadPolicy(args.flags.policy, scenario, {
+      required: candidateSpecs.length > 0,
+    });
     knownDivergences = await loadKnownDivergences(args.flags.divergences);
   } catch (err) {
     if (err instanceof CliInputError) {

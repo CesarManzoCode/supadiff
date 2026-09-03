@@ -56,6 +56,21 @@ describe("supadiff compare (offline)", () => {
     expect(exitCode).toBe(EXIT_BEHAVIORAL_POLICY_VIOLATION);
   });
 
+  it("rejects a bare run artifact in single-artifact mode instead of silently returning empty results (§8A)", async () => {
+    const fx = await writeCliFixtures();
+    const runA = await runSingleTargetArtifact(fx, fx.referencePath); // single target -> artifactKind "run"
+
+    const capture = captureStreams();
+    const exitCode = await compareCommand(
+      parseArgs(["compare", runA, "--policy", fx.policyPath, "--output", "json"]),
+    );
+    capture.restore();
+
+    expect(exitCode).not.toBe(EXIT_OK);
+    expect(capture.stderr.join("")).toMatch(/not a comparison artifact/);
+    expect(capture.stdout).toHaveLength(0);
+  });
+
   it("this module never imports a target driver or provisioning code (statically offline)", async () => {
     const source = await import("node:fs/promises").then((fs) =>
       fs.readFile(new URL("../src/commands/compare.ts", import.meta.url), "utf8").catch(() => ""),

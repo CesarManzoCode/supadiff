@@ -114,6 +114,47 @@ describe("supadiff run", () => {
     expect(exitCode).toBe(EXIT_INVALID);
   });
 
+  it("fails closed (30) before provisioning any target when a multi-target run omits --policy (§8B: no silent empty-rules policy)", async () => {
+    const fx = await writeCliFixtures();
+    const out = await freshOutDir();
+    const args = parseArgs([
+      "run",
+      fx.scenarioPath,
+      "--target",
+      fx.referencePath,
+      "--target",
+      fx.matchPath,
+      "--output",
+      "json",
+      "--out",
+      out,
+    ]);
+    const capture = captureStreams();
+    const exitCode = await runCommand(args);
+    capture.restore();
+    expect(exitCode).toBe(EXIT_INVALID);
+    expect(capture.stderr.join("")).toMatch(/comparison policy/);
+    // No artifact should have been written — provisioning never started.
+    expect(await readBundleDirectory(out).catch(() => undefined)).toBeUndefined();
+  });
+
+  it("does not require --policy for a single-target run (no comparison is performed)", async () => {
+    const fx = await writeCliFixtures();
+    const out = await freshOutDir();
+    const args = parseArgs([
+      "run",
+      fx.scenarioPath,
+      "--target",
+      fx.referencePath,
+      "--output",
+      "json",
+      "--out",
+      out,
+    ]);
+    const exitCode = await runCommand(args);
+    expect(exitCode).toBe(EXIT_OK);
+  });
+
   it("produces byte-identical bundle payload files across two separate invocations", async () => {
     const fx = await writeCliFixtures();
     const out1 = await freshOutDir();
