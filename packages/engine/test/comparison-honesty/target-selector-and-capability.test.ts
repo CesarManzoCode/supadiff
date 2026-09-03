@@ -13,7 +13,12 @@ const now = new Date("2026-09-03T00:00:00.000Z");
 
 describe("targetSelectorMatches: kind, backend, bounded semver range (§7.2)", () => {
   it("matches on kind alone when backend/versionRange are undeclared", () => {
-    expect(targetSelectorMatches({ kind: "supalite-postgres" }, { kind: "supalite-postgres", version: "0.9.0" })).toBe(true);
+    expect(
+      targetSelectorMatches(
+        { kind: "supalite-postgres" },
+        { kind: "supalite-postgres", version: "0.9.0" },
+      ),
+    ).toBe(true);
   });
 
   it("a rule targeting supalite-sqlite@0.9.x MUST NOT match supalite-postgres@0.9.x", () => {
@@ -45,13 +50,19 @@ describe("targetSelectorMatches: kind, backend, bounded semver range (§7.2)", (
 
   it("a version outside the declared range does not match", () => {
     expect(
-      targetSelectorMatches({ kind: "supalite-sqlite", versionRange: "0.9.x" }, { kind: "supalite-sqlite", version: "1.0.0" }),
+      targetSelectorMatches(
+        { kind: "supalite-sqlite", versionRange: "0.9.x" },
+        { kind: "supalite-sqlite", version: "1.0.0" },
+      ),
     ).toBe(false);
   });
 
   it("a version inside the declared range matches", () => {
     expect(
-      targetSelectorMatches({ kind: "supalite-sqlite", versionRange: "0.9.x" }, { kind: "supalite-sqlite", version: "0.9.5" }),
+      targetSelectorMatches(
+        { kind: "supalite-sqlite", versionRange: "0.9.x" },
+        { kind: "supalite-sqlite", version: "0.9.5" },
+      ),
     ).toBe(true);
   });
 
@@ -75,7 +86,11 @@ function backendRule(overrides: Partial<ComparisonRule["selector"]> = {}): Compa
       operationVersion: "1",
       observablePath: "/status",
       referenceTargetSelector: { kind: "fake" },
-      candidateTargetSelector: { kind: "supalite-postgres", backend: "postgres-16", versionRange: "0.9.x" },
+      candidateTargetSelector: {
+        kind: "supalite-postgres",
+        backend: "postgres-16",
+        versionRange: "0.9.x",
+      },
       ...overrides,
     },
     inputType: "string",
@@ -147,7 +162,13 @@ describe("selectRule honors backend/version specificity, never a false positive"
 
 describe("capability-context rule selection (§8, workstream 3)", () => {
   function policyWith(rules: ComparisonRule[]): ComparisonPolicy {
-    return { format: "supadiff.comparison-policy", formatVersion: "1.0", policyId: "p", policyVersion: "1", rules };
+    return {
+      format: "supadiff.comparison-policy",
+      formatVersion: "1.0",
+      policyId: "p",
+      policyVersion: "1",
+      rules,
+    };
   }
 
   const generalRule: ComparisonRule = {
@@ -176,7 +197,10 @@ describe("capability-context rule selection (§8, workstream 3)", () => {
       capabilityContext: "data.text-search",
     },
     inputType: "string",
-    rule: { kind: "invariant", predicate: { op: "eq", left: "/reference/rank", right: { literal: "present" } } },
+    rule: {
+      kind: "invariant",
+      predicate: { op: "eq", left: "/reference/rank", right: { literal: "present" } },
+    },
     strictness: "contract",
     rationale: "token-presence only, declared approximation policy",
     evidence: [{ kind: "note", value: "test" }],
@@ -220,7 +244,12 @@ describe("capability-context rule selection (§8, workstream 3)", () => {
     const refObs = dataSelectObservation({ status: "success" });
     refObs.operation = { id: "data.textSearch", version: "1" };
     refObs.contractFields = { "/rank": "present" };
-    refObs.coverage = { contractualFields: ["/rank"], diagnosticFields: [], ignoredFields: [], unassessedFields: [] };
+    refObs.coverage = {
+      contractualFields: ["/rank"],
+      diagnosticFields: [],
+      ignoredFields: [],
+      unassessedFields: [],
+    };
     const candObs = { ...refObs, contractFields: { "/rank": "present" } };
 
     const results = compareStep({
@@ -241,7 +270,9 @@ describe("capability-context rule selection (§8, workstream 3)", () => {
       resolvedCapabilities: new Set(["data.text-search"]),
       capabilityLevels: { "data.text-search": "approximation" },
     });
-    expect(results.find((r) => r.observablePath === "/rank")?.outcome).toBe("accepted-approximation");
+    expect(results.find((r) => r.observablePath === "/rank")?.outcome).toBe(
+      "accepted-approximation",
+    );
   });
 
   it("a matched capability-scoped rule alone (level not actually approximation/experimental) does NOT produce accepted-approximation", () => {
@@ -249,7 +280,12 @@ describe("capability-context rule selection (§8, workstream 3)", () => {
     const refObs = dataSelectObservation({ status: "success" });
     refObs.operation = { id: "data.textSearch", version: "1" };
     refObs.contractFields = { "/rank": "present" };
-    refObs.coverage = { contractualFields: ["/rank"], diagnosticFields: [], ignoredFields: [], unassessedFields: [] };
+    refObs.coverage = {
+      contractualFields: ["/rank"],
+      diagnosticFields: [],
+      ignoredFields: [],
+      unassessedFields: [],
+    };
     const candObs = { ...refObs, contractFields: { "/rank": "present" } };
 
     const results = compareStep({
@@ -285,8 +321,6 @@ describe("capability-context rule selection (§8, workstream 3)", () => {
 });
 
 describe("known-divergence matching: one dimension at a time must independently block a match (§2.12, workstream 4/7)", () => {
-  const refObs = dataSelectObservation({ status: "success" });
-  const candObs = dataSelectObservation({ status: "error" });
   const registryCtxBase = {
     reference: { kind: "fake", version: "1.0.0" },
     candidate: { kind: "fake", version: "1.0.0" },
@@ -305,7 +339,9 @@ describe("known-divergence matching: one dimension at a time must independently 
   });
 
   it("a different candidate backend blocks the match", () => {
-    const entry = baseKnownDivergence({ candidateSelector: { kind: "fake", backend: "other-backend" } });
+    const entry = baseKnownDivergence({
+      candidateSelector: { kind: "fake", backend: "other-backend" },
+    });
     const result = matchKnownDivergence([entry], {
       ...registryCtxBase,
       candidate: { kind: "fake", backend: "real-backend", version: "1.0.0" },
@@ -314,7 +350,9 @@ describe("known-divergence matching: one dimension at a time must independently 
   });
 
   it("a version outside the entry's declared range blocks the match", () => {
-    const entry = baseKnownDivergence({ candidateSelector: { kind: "fake", versionRange: "0.8.x" } });
+    const entry = baseKnownDivergence({
+      candidateSelector: { kind: "fake", versionRange: "0.8.x" },
+    });
     const result = matchKnownDivergence([entry], {
       ...registryCtxBase,
       candidate: { kind: "fake", version: "0.9.0" },
@@ -334,7 +372,9 @@ describe("known-divergence matching: one dimension at a time must independently 
 
   it("a failure predicate that evaluates false blocks the match (never matches on error text alone)", () => {
     const entry = baseKnownDivergence({
-      expectedFailure: { predicate: { op: "eq", left: "/reference/status", right: { literal: "impossible-value" } } },
+      expectedFailure: {
+        predicate: { op: "eq", left: "/reference/status", right: { literal: "impossible-value" } },
+      },
     });
     expect(matchKnownDivergence([entry], registryCtxBase).status).toBe("none");
   });
@@ -370,7 +410,9 @@ describe("known-divergence matching: one dimension at a time must independently 
 
   it("a registry entry registered for a different failure (B) never reclassifies a different failure (A) on the same path", () => {
     const entryForFailureB = baseKnownDivergence({
-      expectedFailure: { predicate: { op: "eq", left: "/reference/status", right: { literal: "timeout" } } },
+      expectedFailure: {
+        predicate: { op: "eq", left: "/reference/status", right: { literal: "timeout" } },
+      },
     });
     // Our observed failure is candidate.status === "error", not "timeout" (failure A).
     const result = matchKnownDivergence([entryForFailureB], registryCtxBase);
