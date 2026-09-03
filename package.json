@@ -23,7 +23,7 @@
     "test:integration:upgrade-local": "pnpm --filter @supadiff/targets exec vitest run --config vitest.integration.config.ts test/integration/upgrade-local.test.ts",
     "test:fault-lab:replay": "vitest run --config vitest.root.config.ts test/fault-lab/fault-lab.test.ts test/fault-lab/replay.test.ts",
     "test:fault-lab:reduce": "vitest run --config vitest.root.config.ts test/fault-lab/reduce.test.ts",
-    "test:integration:peer-storage": "pnpm --filter @supadiff/targets exec vitest run --config vitest.integration.config.ts test/integration/storage.test.ts",
+    "test:integration:peer-storage": "pnpm --filter @supadiff/targets exec vitest run --config vitest.integration.config.ts test/integration/storage.test.ts test/integration/peer-storage-local.test.ts",
     "test:generators": "pnpm --filter @supadiff/generators test",
     "test:generated-smoke": "pnpm --filter @supadiff/generators test:live-smoke",
     "supadiff": "node packages/cli/dist/bin.js"

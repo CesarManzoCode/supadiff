@@ -248,6 +248,9 @@ export async function startStack(project: SupabaseLocalProvisionedProject): Prom
       await waitForHttpReady(`${project.baseUrl}/auth/v1/health`, {
         timeoutMs: project.config.readinessTimeoutMs,
       });
+      if (project.config.experimentalFeatures.includes("storage")) {
+        await applyStoragePolicies(project);
+      }
       project.containerDigests = await collectContainerDigests();
       return;
     }
@@ -279,6 +282,35 @@ export async function startStack(project: SupabaseLocalProvisionedProject): Prom
   throw new Error(
     `supabase-local: "supabase start" failed after retries for project ${project.projectId}:\n${lastErr}`,
   );
+}
+
+/**
+ * Grants the `authenticated` role permission to manage buckets and objects. Real Supabase
+ * ships `storage.buckets`/`storage.objects` with RLS on and no default policy, so an
+ * ordinary authenticated user cannot create a bucket — whereas the Supalite family's
+ * Storage emulation is not bucket-RLS gated. Applying these permissive policies makes one
+ * scenario authored against Supalite run identically here, keeping the peer comparison
+ * about object *behavior* (byte identity, signed-URL redemption), not about each backend's
+ * bucket-management authorization model. Documented in docs/TARGETS.md.
+ */
+async function applyStoragePolicies(project: SupabaseLocalProvisionedProject): Promise<void> {
+  const { default: postgres } = await import("postgres");
+  const client = postgres(project.dbUrl, { max: 1, connect_timeout: 15, onnotice: () => {} });
+  try {
+    await client.unsafe(`
+      do $$ begin
+        if not exists (select 1 from pg_policies where schemaname='storage' and tablename='buckets' and policyname='sd_authenticated_buckets') then
+          create policy sd_authenticated_buckets on storage.buckets for all to authenticated using (true) with check (true);
+        end if;
+        if not exists (select 1 from pg_policies where schemaname='storage' and tablename='objects' and policyname='sd_authenticated_objects') then
+          create policy sd_authenticated_objects on storage.objects for all to authenticated using (true) with check (true);
+        end if;
+      end $$;
+      grant all on storage.buckets, storage.objects to authenticated, service_role;
+    `);
+  } finally {
+    await client.end({ timeout: 5 });
+  }
 }
 
 /** `docker inspect` the pinned images for their immutable `sha256:` digests (§2.7 identity evidence). */
