@@ -845,7 +845,12 @@ export async function verifyUpgrade(
       baseline.publishableKey,
       ownerEmail,
     );
-    const cBehavior = await runOwnerRlsScenario(createClient, cred.apiUrl, cred.anonKey, ownerEmail);
+    const cBehavior = await runOwnerRlsScenario(
+      createClient,
+      cred.apiUrl,
+      cred.anonKey,
+      ownerEmail,
+    );
     const lockstepOk =
       bBehavior.insertOk === cBehavior.insertOk &&
       bBehavior.insertOk &&
