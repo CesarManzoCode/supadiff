@@ -187,8 +187,25 @@ credentials, no Cartesian target matrix, no Docker. A third job,
 `pnpm test:integration:peer-data-auth-rls`,
 `pnpm test:integration:upgrade-local`, and
 `pnpm test:integration:peer-storage` — L7/L8/L11 against a real
-`supabase-local` stack brought up by the pinned `supabase` CLI. All jobs use
-`concurrency` to cancel superseded runs on the same ref.
+`supabase-local` stack brought up by the pinned `supabase` CLI. A fourth
+job, `hosted-smoke`, runs `SUPADIFF_HOSTED=1 pnpm
+test:integration:hosted-smoke` — L13 against a real dedicated hosted
+Supabase project. It is **fail-closed**: with `SUPADIFF_HOSTED=1` set, a
+missing `SUPADIFF_HOSTED_ACCESS_TOKEN` / `SUPADIFF_HOSTED_PROJECT_REF` is a
+hard error (a guard step plus the test's acceptance-precondition block),
+never a silent skip — so a green `hosted-smoke` job always means the real
+hosted suite actually ran (its no-network safety and budget-refusal cases
+run regardless of the opt-in). The `docs:verify` and `release:evidence`
+gates (L14) run in the `check` job. All jobs use `concurrency` to cancel
+superseded runs on the same ref.
+
+The `release:evidence` gate no longer trusts that a gate passed merely
+because its command exists: `pnpm release:acceptance` executes every
+acceptance gate, records its real exit code and a sanitized copy of the full
+output as a content-addressed artifact under `release-evidence/acceptance/`,
+and `pnpm release:evidence` refuses to emit a manifest unless every gate has
+a recorded, passing, digest-consistent result that is not stale against the
+release-inputs digest.
 
 ## Honesty gates actually enforced
 
@@ -203,17 +220,23 @@ credentials, no Cartesian target matrix, no Docker. A third job,
   command; it is the safe/local acceptance gate and passes cleanly as
   committed. The real-target suites above are a separate, explicit gate —
   never silently folded into `pnpm check` and never silently skipped.
-- No test in this repository claims conformance with **hosted** Supabase
-  (L13 is not implemented; `parseTargetSpec` rejects `supabase-hosted`).
+- The **hosted** Supabase claim (L13) is backed only by
+  `SUPADIFF_HOSTED=1 pnpm test:integration:hosted-smoke` running against a
+  real dedicated throwaway project — never a fake target, never a mock. Its
+  no-network safety/budget-refusal cases run always; its real end-to-end
+  cases `describe.skipIf` themselves out when the project secrets are
+  absent, so a fork PR cannot make them silently "pass".
   `FakeTargetDriver` is explicitly test infrastructure (§15.2) and every doc
-  in `docs/` that mentions it says so; every L6/L7/L8/L11/L12-live-smoke test
-  file says, in its own comments, exactly which real package/CLI/image
-  version it is driving and why.
+  in `docs/` that mentions it says so; every L6/L7/L8/L11/L12-live-smoke/L13
+  test file says, in its own comments, exactly which real
+  package/CLI/image/project it is driving and why.
 
 ## Explicitly not built in this delivery
 
-- `supabase-hosted` driver, and everything depending on it (L13) — out of
-  scope for this sprint.
+- `supabase-hosted` `create-ephemeral` mode has no real acceptance gate
+  (needs an org id + billing); only `attach-explicit` is exercised for real
+  (L13). Hosted `auth.signUp` goes through the real GoTrue admin API rather
+  than the public mailer flow (`docs/adr/0003-hosted-signup-via-admin-api.md`).
 - L8 covers the **local** `lite upgrade --target local` transition (Supalite
   → Supabase-local); the hosted `--target hosted` path is not exercised.
   Storage byte preservation across the upgrade is `unsupported` (rejected
@@ -221,7 +244,7 @@ credentials, no Cartesian target matrix, no Docker. A third job,
   source does not carry the serial-sequence position (a registered
   divergence, not a bug in `verify-upgrade`).
 - Driver contract test suite generalized across arbitrary future drivers
-  (§15.1 item 5) — only the Supalite family and `supabase-local` are
-  exercised.
+  (§15.1 item 5) — only the Supalite family, `supabase-local` and
+  `supabase-hosted` are exercised.
 - Realtime, Edge Functions, a dashboard/UI, a generic fuzzing framework, or
   a generic database reducer — never in scope (Architecture Contract §20).

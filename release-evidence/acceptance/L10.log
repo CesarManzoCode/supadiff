@@ -1,0 +1,20 @@
+$ pnpm test:fault-lab:reduce
+
+===== stdout =====
+
+> supadiff-workspace@1.0.0 test:fault-lab:reduce /home/cesarmanzocode/supadiff
+> vitest run --config vitest.root.config.ts test/fault-lab/reduce.test.ts
+
+
+ RUN  v2.1.8 /home/cesarmanzocode/supadiff
+
+ ✓ test/fault-lab/reduce.test.ts (2 tests) 96ms
+
+ Test Files  1 passed (1)
+      Tests  2 passed (2)
+   Start at  19:59:22
+   Duration  873ms (transform 183ms, setup 0ms, collect 355ms, tests 96ms, environment 0ms, prepare 56ms)
+
+
+===== stderr =====
+

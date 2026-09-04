@@ -34,10 +34,14 @@ also exercised against a real target: L6/L11's integration tests run real
 `@supabase/lite@0.9.0` server, and the redaction pipeline above (not a fake-
 target substitute) processes every real response.
 
-**Still not exercised end to end** (no OTP/recovery-code flow, and
-hosted-project-identifier aliasing has no code path yet, because that flow
-only exists against a hosted target — L13, out of scope this sprint). The
-`supabase-local` driver (L7/L8) does hold real DB passwords and JWT secrets
+**Still not exercised end to end** (no OTP/recovery-code flow). The
+`supabase-hosted` driver (L13) holds a Supabase Management API access token
+and the project's anon/service_role keys; they go straight into the
+`SecretVault`, never appear in a `RawOperationResult`, the recovery handle
+is the non-secret `hosted-namespace:<ref>:<runNamespace>` string, and the
+hosted evidence log is redacted against the run's known secret literals
+before it is surfaced. The `supabase-local` driver (L7/L8) does hold real DB
+passwords and JWT secrets
 in memory; they are put into the `SecretVault` and never appear in a
 `RawOperationResult`, but a dedicated config-redaction corpus for them is
 not yet part of the secret-corpus suite.
@@ -79,10 +83,14 @@ corpus suite.
 
 ## What remains out of scope
 
-- Hosted safety flags (`--allow-hosted*`) are parsed but not enforced
-  against anything real, because no hosted driver exists (L13).
-- Real HTTP transport exists for the Supalite family (L6/L11) and for
-  `supabase-local` (L7/L8/L11), so header/query-string redaction is
-  exercised there for real, not only against fake-target fixtures — but
-  never against hosted Supabase, which has no driver (L13; see
-  `docs/LIMITATIONS.md`).
+- Hosted safety flags (`--allow-hosted*`) are enforced by the
+  `supabase-hosted` driver (L13): `SUPADIFF_HOSTED=1` and
+  `spec.safety.allowHosted` are both required, `create-ephemeral` also
+  requires `allowHostedCreate`, the cost estimate is checked against
+  `maxHostedCostUsd`, and an attached project holding pre-existing `public`
+  tables / Storage buckets / auth users is refused unless
+  `allowHostedDestructive` is set — all before any side effect.
+- Real HTTP transport exists for the Supalite family (L6/L11), for
+  `supabase-local` (L7/L8/L11), and for `supabase-hosted` (L13), so
+  header/query-string redaction is exercised for real against all three,
+  not only against fake-target fixtures (see `docs/LIMITATIONS.md`).

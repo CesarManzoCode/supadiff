@@ -1,0 +1,26 @@
+$ SUPADIFF_HOSTED=1 pnpm test:integration:hosted-smoke
+
+===== stdout =====
+
+> supadiff-workspace@1.0.0 test:integration:hosted-smoke /home/cesarmanzocode/supadiff
+> pnpm --filter @supadiff/targets exec vitest run --config vitest.integration.config.ts test/integration/hosted-smoke.test.ts
+
+
+ RUN  v2.1.8 /home/cesarmanzocode/supadiff/packages/targets
+
+ ✓ test/integration/hosted-smoke.test.ts (14 tests | 1 skipped) 44885ms
+   ✓ L13 real hosted smoke — dedicated project supadiff-v1-smoke > starts from an empty project (throwaway smoke project, not a shared one) 5772ms
+   ✓ L13 real hosted smoke — dedicated project supadiff-v1-smoke > runs the canonical Data + Auth + RLS scenario end to end on real hosted services and cleans up exactly what it created 12455ms
+   ✓ L13 real hosted smoke — dedicated project supadiff-v1-smoke > aborts the run when the per-run request budget is too small to provision 2069ms
+   ✓ L13 real hosted smoke — dedicated project supadiff-v1-smoke > refuses to attach to a project that already holds public tables (no accidental destructive access) 6637ms
+   ✓ L13 real hosted smoke — dedicated project supadiff-v1-smoke > HostedResidentResourcesError is the specific refusal for a non-empty attached project 6062ms
+   ✓ L13 real hosted smoke — dedicated project supadiff-v1-smoke > crash recovery removes exactly the run's resources from the non-secret ownership handle alone 11154ms
+
+ Test Files  1 passed (1)
+      Tests  13 passed | 1 skipped (14)
+   Start at  20:07:07
+   Duration  45.89s (transform 289ms, setup 0ms, collect 560ms, tests 44.89s, environment 0ms, prepare 76ms)
+
+
+===== stderr =====
+

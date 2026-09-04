@@ -1,9 +1,14 @@
 # Contributing
 
-This repository implements Implementation DAG layers L0-L12 of the
-Architecture Contract. L13 (hosted target) and L14 (documentation/release
-evidence gate) are out of scope for this sprint. Read `docs/LIMITATIONS.md`
-before assuming any capability beyond what it lists.
+This repository implements Implementation DAG layers L0-L14 of the
+Architecture Contract: the deterministic comparison core (L0-L5), the real
+Supalite family (L6), the real `supabase-local` driver + peer comparison
+(L7), Supalite → `lite upgrade` → Supabase-local verification (L8), the
+fault lab + replay (L9), the reducer (L10), Storage peer comparison (L11),
+seeded scenario generation (L12), the real `supabase-hosted` target (L13),
+and the documentation/release-evidence gate (L14, `pnpm docs:verify` +
+`pnpm release:evidence`). Read `docs/LIMITATIONS.md` before assuming any
+capability beyond what it lists.
 
 ## Before changing anything
 

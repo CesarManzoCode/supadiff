@@ -1,0 +1,27 @@
+$ pnpm test:generators
+
+===== stdout =====
+
+> supadiff-workspace@1.0.0 test:generators /home/cesarmanzocode/supadiff
+> pnpm --filter @supadiff/generators test
+
+
+> @supadiff/generators@1.0.0 test /home/cesarmanzocode/supadiff/packages/generators
+> vitest run
+
+
+ RUN  v2.1.8 /home/cesarmanzocode/supadiff/packages/generators
+
+ ✓ test/generation.test.ts (6 tests) 64847ms
+   ✓ L12 generation: preconditions are honored (§10.2) > never emits update/delete without an insert already tracked for that table 928ms
+   ✓ L12 generation: preconditions are honored (§10.2) > records a skipped-precondition decision for every update/delete the raw draw asked for but the model rejected 979ms
+   ✓ L12 generation: 10,000 validation-only generations (§L12 acceptance) > every generated scenario parses and canonicalizes without throwing, across many seeds 62872ms
+
+ Test Files  1 passed (1)
+      Tests  6 passed (6)
+   Start at  20:00:06
+   Duration  65.53s (transform 119ms, setup 0ms, collect 251ms, tests 64.85s, environment 0ms, prepare 59ms)
+
+
+===== stderr =====
+

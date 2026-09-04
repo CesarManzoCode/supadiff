@@ -25,8 +25,13 @@ seventh, `fake`, used only for test infrastructure (§15.2).
 integration/peer-data-auth-rls.test.ts` and `peer-storage-local.test.ts`
   exercise it end to end against the Supalite family. See "Supabase-local
   driver architecture" below.
-- `supabase-hosted` — **no driver.** `parseTargetSpec` still rejects it with
-  `unsupported-target-kind`; L13 was out of scope for this sprint.
+- `supabase-hosted` — real driver in `@supadiff/targets/src/supabase-hosted/`
+  (L13), running a scenario against a real hosted Supabase project reached
+  over its public API and the Supabase Management API. Opt-in only:
+  `SUPADIFF_HOSTED=1` + `spec.safety.allowHosted`.
+  `SUPADIFF_HOSTED=1 pnpm test:integration:hosted-smoke` exercises it end to
+  end against the dedicated throwaway project. See "Supabase-hosted driver
+  architecture" below.
 
 ## Supalite driver architecture
 
@@ -128,6 +133,59 @@ production service images, not an embedded re-implementation.
 `storage.signed-url.redeem` is `exact` here (the server emits the
 capital-`signedURL` key the official client expects) — the exact opposite of
 Supalite 0.9.0; see `docs/DIVERGENCES.md`.
+
+## Supabase-hosted driver architecture (L13)
+
+`packages/targets/src/supabase-hosted/`. Same SPI shape as every other
+driver (imports only `@supadiff/engine/spi`) and shares the same
+`@supabase/supabase-js@2.97.0` per-operation dispatch
+(`src/shared/rest-dispatch.ts`), so Data / Auth / native RLS / Storage are
+declared `exact` — a hosted project runs the same production services as
+`supabase-local`.
+
+- **Explicit opt-in, every time.** `enforceHostedSafety` runs before the
+  first management-plane call: `SUPADIFF_HOSTED=1` must be in the
+  environment, `spec.safety.allowHosted` must be `true`, `create-ephemeral`
+  additionally requires `safety.allowHostedCreate`, and the estimated cost
+  must not exceed `safety.maxHostedCostUsd`.
+- **Attach-explicit (the supported, tested mode).** Runs against the
+  pre-existing project named by `SUPADIFF_HOSTED_PROJECT_REF`. Credentials
+  (Management API access token, project ref, optional explicit API keys)
+  are read from the environment only — never a config field — and go
+  straight into the `SecretVault`. `create-ephemeral` (driver creates and
+  deletes a throwaway project) is implemented and safety-gated but not
+  exercised in CI.
+- **Identity + drift.** Provisioning calls `GET /v1/projects/{ref}`, records
+  the project's Postgres version / region / status, and refuses to run if
+  the observed `projectRef` / Postgres major / region does not match what
+  the caller expected (`HostedProjectDriftError`), or if the project is not
+  `ACTIVE_HEALTHY`.
+- **Resource namespace ownership + no accidental destruction.** Provisioning
+  takes a pre-run census of `public` tables, Storage buckets and auth users.
+  If any are present and `safety.allowHostedDestructive` is not set, the run
+  is refused (`HostedResidentResourcesError`). The census is persisted into
+  a `supadiff_ownership.runs` row in the project itself.
+- **Request/cost/rate safety.** Every management- and data-plane request is
+  counted against `config.maxRequests`; hitting the cap aborts the run
+  (`HostedRateLimitError`) rather than spending further.
+- **Deterministic cleanup + crash recovery.** Teardown diffs the current
+  census against the pre-run one and removes _exactly_ the `public` tables,
+  Storage buckets and auth users that appeared during the run — nothing
+  else — then drops its ownership row (and the ownership schema once no run
+  owns anything). A crash is recoverable from the non-secret handle
+  `hosted-namespace:<ref>:<runNamespace>` alone: `recoverHostedNamespace`
+  re-reads the persisted census and performs the same scoped cleanup,
+  idempotently.
+- **`auth.signUp`.** The dedicated smoke project has no SMTP and the
+  project-scoped Management token cannot toggle mailer autoconfirm, so the
+  driver creates the confirmed user through the real GoTrue admin API
+  (`auth.admin.createUser`, `email_confirm: true`) and obtains the session
+  through a real GoTrue password grant — both genuine hosted GoTrue, never a
+  mock. See `docs/adr/0003-hosted-signup-via-admin-api.md`.
+- **Secret-safe evidence.** The hosted evidence log records what the driver
+  did (provisioned, applied schema, cleaned up) as structured notes with no
+  credential, key, token or signed URL, and is redacted against the run's
+  known secret literals before it is surfaced.
 
 ## Supalite → Supabase upgrade verification (L8)
 

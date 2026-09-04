@@ -3,7 +3,7 @@
 This document exists to prevent overclaiming. Read it before citing any
 result from this repository.
 
-## Scope: L0-L12
+## Scope: L0-L14
 
 Implemented and tested against real evidence: the deterministic comparison
 core (L0-L5, proven against fake targets), the Supalite target family (L6,
@@ -12,12 +12,26 @@ target driver and Supalite ↔ Supabase-local peer comparison (L7), Supalite →
 real `lite upgrade` → Supabase-local upgrade verification (L8, `supadiff
 verify-upgrade`), the dogfood fault lab and `replay` command (L9), the state-aware reducer and `reduce`
 command (L10), Storage peer comparison including Supalite ↔ Supabase-local
-(L11), and seeded scenario generation (L12).
+(L11), seeded scenario generation (L12), the real `supabase-hosted` target
+(L13, `SUPADIFF_HOSTED=1 pnpm test:integration:hosted-smoke` against a real
+hosted project), and the documentation/release-evidence gate (L14, `pnpm
+docs:verify` + `pnpm release:acceptance` + `pnpm release:evidence` — the
+last refuses to emit a manifest unless every acceptance gate has a recorded,
+passing, digest-consistent result).
 
-**Not implemented: L13 (hosted target), L14 (documentation/release evidence
-gate).** Realtime, Edge Functions, a dashboard/UI, a generic fuzzing
-framework, and a generic database reducer were never in scope for any layer
-in this sprint (see the Architecture Contract's own non-goals, §20).
+**Accommodated / not exercised within L13:** `supabase-hosted`
+`create-ephemeral` mode is implemented and safety-gated but has no real CI
+gate (needs an org id + billing); `auth.signUp` on hosted uses the real
+GoTrue admin API + password grant rather than the public mailer flow (see
+`docs/adr/0003-hosted-signup-via-admin-api.md`); hosted `lite upgrade
+--target hosted` transitions are not exercised. The hosted cleanup gate
+proves that the measured owned-resource census (public tables, auth users,
+Storage buckets, SupaDiff ownership schema) returns to the pre-run empty
+state — not that the hosted project is byte-for-byte identical to its
+initial image. Realtime, Edge Functions, a
+dashboard/UI, a generic fuzzing framework, and a generic database reducer
+were never in scope for any layer (see the Architecture Contract's own
+non-goals, §20).
 
 ## L7/L8: implemented on a real Docker host
 
@@ -186,10 +200,15 @@ out at its point of implementation with a contract section reference:
 2. **Artifacts are directory trees, not ZIP files**, per the contract's own
    "or" in §9.1. See `docs/adr/0002-artifact-directory-format.md`.
 
-3. **Hosted safety flags are parsed, not enforced.** `--allow-hosted`,
-   `--allow-hosted-create`, `--allow-hosted-destructive`,
-   `--max-hosted-cost-usd` are accepted by the CLI argument parser but have
-   no effect, because no hosted driver exists to gate (L13, not started).
+3. **Hosted safety flags are enforced by the `supabase-hosted` driver
+   (L13).** `SUPADIFF_HOSTED=1` and `spec.safety.allowHosted` are both
+   required before any management-plane call; `create-ephemeral` also
+   requires `allowHostedCreate`; the cost estimate is checked against
+   `maxHostedCostUsd`; an attached project holding pre-existing `public`
+   tables / Storage buckets / auth users is refused unless
+   `allowHostedDestructive` is set. `create-ephemeral` itself has no real CI
+   gate (it needs `SUPADIFF_HOSTED_ORG_ID` + billing); only `attach-explicit`
+   has a passing real acceptance gate.
 
 4. **`supabase-local` schema application and Data-API grants.** The
    `supabase-local` driver applies the scenario's schema over the direct
@@ -244,6 +263,9 @@ out at its point of implementation with a contract section reference:
 **SupaDiff's deterministic comparison core, real Supalite target family,
 real `supabase-local` target driver, Supalite ↔ Supabase-local peer
 comparison (Data + Auth + RLS + Storage), Supalite → real `lite upgrade` →
-Supabase-local upgrade verification, fault lab/replay, reducer, and scenario
-generation are implemented and proven with real evidence. A hosted target (L13) and a documentation/release evidence
-gate (L14) are not implemented — they were out of scope for this sprint.**
+Supabase-local upgrade verification, fault lab/replay, reducer, scenario
+generation, the real `supabase-hosted` target (attach-explicit, against a
+real hosted project), and the documentation/release-evidence gate are all
+implemented and proven with real evidence (L0-L14). The accommodations and
+not-yet-exercised surfaces above are the complete list — read them before
+citing any hosted result.**

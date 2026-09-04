@@ -200,7 +200,97 @@ export const SUPABASE_LOCAL_CONFIG_SCHEMA = {
 } as const;
 registerSchema(SUPABASE_LOCAL_CONFIG_SCHEMA);
 
-/** Per-`TargetKind` closed config schema `$id`s. `supabase-hosted` remains L13 (not registered). */
+/**
+ * Closed config schema for the `supabase-hosted` target kind (§2.7, §4.4; L13). A real
+ * hosted Supabase project reached over its public API + the Supabase Management API. No
+ * credential literal is ever a config field — project ref, access token and API keys are
+ * supplied out-of-band through the environment and only ever live in the run's
+ * `SecretVault` (§2.6, §6.4). Every field is REQUIRED for the same reason the other target
+ * schemas require theirs: no implicit engine default may silently decide a
+ * safety/namespace/cost-relevant fact, and the compiler always writes the resolved value
+ * into the plan.
+ */
+export const SUPABASE_HOSTED_CONFIG_SCHEMA = {
+  $id: "supadiff://schema/target-config/supabase-hosted.json",
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    attachMode: {
+      enum: ["attach-explicit", "create-ephemeral"],
+      description:
+        "`attach-explicit`: run against the pre-existing project named by " +
+        "`SUPADIFF_HOSTED_PROJECT_REF` (must have an empty `public` schema and no buckets " +
+        "unless `safety.allowHostedDestructive`). `create-ephemeral`: the driver creates a " +
+        "throwaway project in `SUPADIFF_HOSTED_ORG_ID` and deletes it on teardown — requires " +
+        "`safety.allowHostedCreate`.",
+    },
+    managementApiBaseUrl: {
+      type: "string",
+      minLength: 1,
+      description:
+        "Base URL of the Supabase Management API (`https://api.supabase.com`). Explicit so a " +
+        "self-hosted control plane or a test double is a config choice, never a code edit.",
+    },
+    namespacePrefix: {
+      type: "string",
+      pattern: "^[a-z][a-z0-9_]{1,20}$",
+      description:
+        "Prefix for every resource the run creates (schemas, buckets, Storage objects). The " +
+        "run's namespace is `<namespacePrefix>_<runNamespace>`; teardown drops exactly the " +
+        "objects it created under it and nothing else.",
+    },
+    region: {
+      type: "string",
+      minLength: 1,
+      description:
+        "Region for `create-ephemeral` (e.g. `us-east-1`); recorded but not acted on for " +
+        "`attach-explicit`.",
+    },
+    plan: {
+      enum: ["free", "pro"],
+      description:
+        "Billing plan assumed for `create-ephemeral` cost estimation; the estimate is checked " +
+        "against `safety.maxHostedCostUsd` before anything is created.",
+    },
+    maxRequests: {
+      type: "integer",
+      minimum: 1,
+      description:
+        "Hard cap on management-plane + data-plane requests this target may issue in one run. " +
+        "Exceeding it aborts the run rather than continuing to spend against a hosted project.",
+    },
+    keyMode: {
+      const: "opaque-v1",
+      description: "Opaque `sb_publishable_*`/`sb_secret_*` API keys, matching the other schemas.",
+    },
+    routePrefixes: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        auth: { type: "string", minLength: 1 },
+        rest: { type: "string", minLength: 1 },
+        storage: { type: "string", minLength: 1 },
+      },
+      required: ["auth", "rest", "storage"],
+    },
+    readinessTimeoutMs: { type: "integer", minimum: 1000 },
+  },
+  required: [
+    "attachMode",
+    "managementApiBaseUrl",
+    "namespacePrefix",
+    "region",
+    "plan",
+    "maxRequests",
+    "keyMode",
+    "routePrefixes",
+    "readinessTimeoutMs",
+  ],
+} as const;
+registerSchema(SUPABASE_HOSTED_CONFIG_SCHEMA);
+
+/** Per-`TargetKind` closed config schema `$id`s. */
 export const TARGET_CONFIG_SCHEMA_BY_KIND: Record<string, string> = {
   fake: FAKE_TARGET_CONFIG_SCHEMA.$id,
   "supalite-sqlite": SUPALITE_SQLITE_CONFIG_SCHEMA.$id,
@@ -208,6 +298,7 @@ export const TARGET_CONFIG_SCHEMA_BY_KIND: Record<string, string> = {
   "supalite-pglite": SUPALITE_PGLITE_CONFIG_SCHEMA.$id,
   "supalite-postgres": SUPALITE_POSTGRES_CONFIG_SCHEMA.$id,
   "supabase-local": SUPABASE_LOCAL_CONFIG_SCHEMA.$id,
+  "supabase-hosted": SUPABASE_HOSTED_CONFIG_SCHEMA.$id,
 };
 
 export const TARGET_SPEC_SCHEMA = {

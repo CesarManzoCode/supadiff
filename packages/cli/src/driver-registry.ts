@@ -1,7 +1,11 @@
 import type { ResourceDeclaration, TargetSpec } from "@supadiff/spec";
 import { FakeTargetDriver, type FakeScript } from "@supadiff/engine";
 import type { TargetDriver } from "@supadiff/engine/spi";
-import { createSupaliteDriver, type SupaliteTargetKind } from "@supadiff/targets";
+import {
+  createSupaliteDriver,
+  createSupabaseHostedDriver,
+  type SupaliteTargetKind,
+} from "@supadiff/targets";
 
 const SUPALITE_KINDS = new Set<string>([
   "supalite-sqlite",
@@ -34,6 +38,12 @@ export function buildDriverForSpec(
       scenarioResources,
       postgresUrl,
     });
+  }
+  if (spec.kind === "supabase-hosted") {
+    // Hosted is opt-in only: the driver itself enforces `SUPADIFF_HOSTED=1`,
+    // `safety.allowHosted`, the request/cost budget and the resident-resource refusal
+    // before any side effect (§2.7, §4.4; L13).
+    return createSupabaseHostedDriver({ scenarioResources });
   }
   throw new Error(
     `target "${spec.id}": no driver registered for kind "${spec.kind}" in this build`,

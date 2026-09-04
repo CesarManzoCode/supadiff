@@ -1,0 +1,27 @@
+$ pnpm test:integration:supalite
+
+===== stdout =====
+
+> supadiff-workspace@1.0.0 test:integration:supalite /home/cesarmanzocode/supadiff
+> pnpm --filter @supadiff/targets exec vitest run --config vitest.integration.config.ts test/integration/supalite.test.ts
+
+
+ RUN  v2.1.8 /home/cesarmanzocode/supadiff/packages/targets
+
+ ✓ test/integration/supalite.test.ts (8 tests) 50025ms
+   ✓ L6 Supalite target family — data smoke (all four backends) > runs to completion on supalite-sqlite 1668ms
+   ✓ L6 Supalite target family — data smoke (all four backends) > runs to completion on supalite-sqlite-postgres 6000ms
+   ✓ L6 Supalite target family — data smoke (all four backends) > runs to completion on supalite-pglite 10024ms
+   ✓ L6 Supalite target family — data smoke (all four backends) > runs to completion on supalite-postgres 6401ms
+   ✓ L6 Supalite target family — Auth + RLS smoke > owner sees own row, anon does not, on supalite-sqlite-postgres 6005ms
+   ✓ L6 Supalite target family — Auth + RLS smoke > owner sees own row, anon does not, on supalite-pglite 10108ms
+   ✓ L6 Supalite target family — Auth + RLS smoke > owner sees own row, anon does not, on supalite-postgres 6324ms
+
+ Test Files  1 passed (1)
+      Tests  8 passed (8)
+   Start at  19:55:28
+   Duration  50.97s (transform 265ms, setup 0ms, collect 522ms, tests 50.02s, environment 0ms, prepare 65ms)
+
+
+===== stderr =====
+
