@@ -87,4 +87,48 @@ describe("parseTargetSpec", () => {
     (bad.config as Record<string, unknown>)["nope"] = 1;
     expect(() => parseTargetSpec(bad as never)).toThrow(SpecValidationError);
   });
+
+  it("accepts a valid supabase-hosted target (L13) and rejects an unknown config key / a credential literal", () => {
+    const base = {
+      id: "target.hosted",
+      kind: "supabase-hosted",
+      runtime: { runtime: "node", version: process.version },
+      backend: { backend: "postgres", version: "15" },
+      config: {
+        attachMode: "attach-explicit",
+        managementApiBaseUrl: "https://api.supabase.com",
+        namespacePrefix: "sd",
+        region: "us-east-1",
+        plan: "free",
+        maxRequests: 400,
+        keyMode: "opaque-v1",
+        routePrefixes: { auth: "/auth/v1", rest: "/rest/v1", storage: "/storage/v1" },
+        readinessTimeoutMs: 60000,
+      },
+      credentialRefs: ["cred.hosted-access-token"],
+      lifecycle: {
+        allocation: "attach-explicit",
+        isolation: "fresh-instance",
+        readinessTimeoutMs: 60000,
+        teardownTimeoutMs: 60000,
+        cleanup: "always",
+        keepOnFailure: "deny",
+      },
+      safety: {
+        allowHosted: true,
+        allowHostedCreate: false,
+        allowHostedDestructive: false,
+        maxHostedCostUsd: 0,
+      },
+    };
+    expect(parseTargetSpec(base as never).kind).toBe("supabase-hosted");
+
+    const unknownKey = structuredClone(base);
+    (unknownKey.config as Record<string, unknown>)["projectRef"] = "abcdefghijklmnopqrst";
+    expect(() => parseTargetSpec(unknownKey as never)).toThrow(SpecValidationError);
+
+    const badPrefix = structuredClone(base);
+    (badPrefix.config as Record<string, unknown>)["namespacePrefix"] = "Bad Prefix!";
+    expect(() => parseTargetSpec(badPrefix as never)).toThrow(SpecValidationError);
+  });
 });

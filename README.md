@@ -6,30 +6,35 @@ diff, a schema diff, an upstream-suite replacement, or a generic fuzzer.
 
 ## What is proven right now
 
-This repository implements Implementation DAG layers **L0-L12** of the
+This repository implements Implementation DAG layers **L0-L14** of the
 Architecture Contract: the deterministic comparison core (L0-L5, proven
 against fake targets), a real Supalite target family (L6), a real
 `supabase-local` target driver + Supalite ↔ Supabase-local peer comparison
 (L7), Supalite → real `lite upgrade` → Supabase-local upgrade verification
 (L8, `supadiff verify-upgrade`), a dogfood fault lab and replay (L9), a state-aware reducer (L10), Storage peer
-comparison including Supalite ↔ Supabase-local (L11), and seeded scenario
-generation (L12). "Real" throughout this document means the exact-pinned
-`@supabase/lite@0.9.0` package and/or a real Supabase stack brought up by the
-pinned `supabase` CLI 2.116.0 over Docker — never a fake target.
+comparison including Supalite ↔ Supabase-local (L11), seeded scenario
+generation (L12), a real `supabase-hosted` target run against a real hosted
+Supabase project (L13, opt-in), and a documentation/release-evidence gate
+(L14, `pnpm docs:verify` + `pnpm release:evidence`). "Real" throughout this
+document means the exact-pinned `@supabase/lite@0.9.0` package, a real
+Supabase stack brought up by the pinned `supabase` CLI 2.116.0 over Docker,
+or a real hosted Supabase project reached over its public API + the Supabase
+Management API — never a fake target.
 
 ```
 ScenarioSpec → validation → canonical ExecutionPlan
-             → deterministic execution on fake, real Supalite, OR real
-               supabase-local (Docker) targets
+             → deterministic execution on fake, real Supalite, real
+               supabase-local (Docker), OR real supabase-hosted targets
              → raw observations → redaction → semantic observations
              → semantic comparison → divergence classification
              → deterministic artifact
              → offline compare / inspect / replay / reduce / verify-upgrade
 ```
 
-**L13 (hosted target) and L14 (documentation/release evidence gate) are not
-implemented** — out of scope for this sprint. See `docs/LIMITATIONS.md` for
-the full, current list of what is and is not proven.
+`docs/LIMITATIONS.md` is the authoritative, current list of what is and is
+not proven — including the explicit accommodations inside L13 (hosted
+`create-ephemeral` has no CI gate; hosted `auth.signUp` uses the real GoTrue
+admin API — see `docs/adr/0003-hosted-signup-via-admin-api.md`).
 
 ## L7/L8: implemented on a real Docker host
 
@@ -97,6 +102,13 @@ pnpm test:integration:peer-storage        # L11: Supalite x2 and Supalite <-> su
 
 supadiff verify-upgrade             # L8 dry-run (prints the §12 workflow, mutates nothing)
 supadiff verify-upgrade --execute   # L8 real transition: Supalite -> lite upgrade -> supabase-local
+
+# Real hosted Supabase project (opt-in) — needs SUPADIFF_HOSTED_ACCESS_TOKEN + SUPADIFF_HOSTED_PROJECT_REF
+SUPADIFF_HOSTED=1 pnpm test:integration:hosted-smoke   # L13: real supabase-hosted Data+Auth+RLS + refusals + cleanup/recovery
+
+# Documentation + release-evidence gate (no network, no credentials)
+pnpm docs:verify                    # L14: docs <-> implementation <-> acceptance-command consistency
+pnpm release:evidence               # L14: (re)generate + verify release-evidence/v1.0.0.json
 ```
 
 Every one of these talks to a real target over real HTTP via the real
@@ -135,11 +147,14 @@ packages/
   spec/        canonical types, JSON Schemas, RFC 8785 canonicalization, operation catalog
   engine/      planning, lockstep execution, redaction, comparator, artifact assembly
   targets/     concrete target drivers — real Supalite family (L6), real supabase-local (L7),
-               shared REST dispatch, Supalite -> lite upgrade -> supabase-local verification (L8)
+               real supabase-hosted (L13), shared REST dispatch,
+               Supalite -> lite upgrade -> supabase-local verification (L8)
   reducer/     state-aware reduction (L10) — ddmin over the dependency graph, acceptance oracle
   generators/  seeded scenario generation (L12) — fast-check adapter, Data+Auth+RLS domain model
   cli/         supadiff CLI: run / compare / inspect / replay / reduce / verify-upgrade
-scenarios/deterministic/              canonical L6/L7/L11 scenario fixtures
+scripts/docs-verify.mjs, release-evidence.mjs   L14 documentation + release-evidence gates
+release-evidence/v1.0.0.json                    versioned, self-verifying release manifest (L14)
+scenarios/deterministic/              canonical L6/L7/L11 scenario fixtures (L13 reuses the L7 peer scenario)
 divergences/active/                   known-divergence registry (signedUrl/signedURL + the L8 lite-upgrade sequence entry)
 test/fixtures/, test/fault-lab/       the L0-L5 acceptance fixtures and the L9 dogfood fault lab
 docs/                                  see below
@@ -162,8 +177,12 @@ docs/                                  see below
 
 SupaDiff's README **does not** claim:
 
-- Real Supabase (hosted) comparison works (L13 — out of scope for this sprint;
-  `parseTargetSpec` still rejects `supabase-hosted`)
+- Hosted `create-ephemeral` project provisioning is covered by a real
+  acceptance gate — it is implemented and safety-gated, but only
+  `attach-explicit` against a real hosted project has a passing gate (L13).
+  Hosted `auth.signUp` is exercised through the public mailer flow — the
+  driver uses the real GoTrue admin API instead (see
+  `docs/adr/0003-hosted-signup-via-admin-api.md`)
 - The full Architecture Contract §12 upgrade surface is covered — L8 runs the
   real `lite upgrade --target local` transition (Supalite → Supabase-local)
   and verifies row-ID + Auth-subject preservation, session non-preservation +

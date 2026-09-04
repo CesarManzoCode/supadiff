@@ -1,10 +1,11 @@
 # Architecture
 
-This document summarizes what is actually implemented (L0-L12) and how it
+This document summarizes what is actually implemented (L0-L14) and how it
 maps to the Architecture Contract. It does not restate the contract; see the
-contract itself for the normative design. L7 (Supabase-local) and L8 (Supalite
-→ real `lite upgrade` → Supabase-local verification) were implemented on a
-real Docker host after being blocked in the original sandbox — see
+contract itself for the normative design. L7 (Supabase-local), L8 (Supalite
+→ real `lite upgrade` → Supabase-local verification) and L13
+(`supabase-hosted`, run against a real hosted project) all require external
+infrastructure (Docker, or a hosted Supabase project) — see
 `docs/LIMITATIONS.md`.
 
 ## Thesis
@@ -36,7 +37,9 @@ observable behaviors satisfy the same application contract?
 | `FakeTargetDriver`                                               | `@supadiff/engine`                      | Implemented, test infrastructure only (§15.2), also backs the L9 dogfood fault lab                                                                                                                                                                                                        |
 | Concrete Supalite drivers (4 backends)                           | `@supadiff/targets`                     | Implemented, real `@supabase/lite@0.9.0` (L6)                                                                                                                                                                                                                                             |
 | Shared Supabase REST dispatch                                    | `@supadiff/targets/src/shared`          | Implemented: one `@supabase/supabase-js@2.97.0` per-operation translation shared by the Supalite family and `supabase-local`                                                                                                                                                              |
-| `supabase-local` driver                                          | `@supadiff/targets`                     | Implemented (L7): pinned `supabase` CLI 2.116.0 over Docker Compose; Data/Auth/native-RLS/Storage `exact`; `supabase-hosted` (L13) out of scope                                                                                                                                           |
+| `supabase-local` driver                                          | `@supadiff/targets`                     | Implemented (L7): pinned `supabase` CLI 2.116.0 over Docker Compose; Data/Auth/native-RLS/Storage `exact`                                                                                                                                                                                 |
+| `supabase-hosted` driver                                         | `@supadiff/targets`                     | Implemented (L13): real hosted project over public API + Supabase Management API; explicit `SUPADIFF_HOSTED=1` + `safety.allowHosted` opt-in; identity/drift, resident-resource refusal, request/cost budget, deterministic cleanup + crash recovery of exactly what the run created      |
+| `docs:verify` / `release:evidence` gates                         | `scripts/`                              | Implemented (L14): documentation ↔ implementation ↔ acceptance-command consistency; versioned, secret-free, invariant-checked release-evidence manifest (`release-evidence/v1.0.0.json`)                                                                                                |
 | `verifyUpgrade` (Supalite → Supabase upgrade verification)       | `@supadiff/targets`, `supadiff` (cli)   | Implemented (L8): dry-run; real `lite upgrade` from a cloned Supalite source into a fresh Supabase-local stack; retained baseline; ID/Auth-subject preservation, session non-preservation + reauthentication, RLS lockstep B vs C; sequence-position + Storage gaps recorded, not claimed |
 | Fault lab + `replay`                                             | `test/fault-lab/`, `supadiff` (cli)     | Implemented (L9)                                                                                                                                                                                                                                                                          |
 | Reducer + `reduce`                                               | `@supadiff/reducer`, `supadiff` (cli)   | Implemented: dependency graph, ddmin, 3x flake gate, signature-identity oracle excluding `scenarioDigest` (L10)                                                                                                                                                                           |
@@ -85,9 +88,10 @@ parseScenarioSpec (spec)
 
 ## Where this delivery required interpretation
 
-See `docs/adr/` for the two points where the contract's own text was
-internally ambiguous or silent and a decision had to be made without
-superseding the contract:
+See `docs/adr/` for the points where the contract's own text was internally
+ambiguous or silent, or a real target environment forced an accommodation,
+and a decision had to be made without superseding the contract:
 
 - `docs/adr/0001-operation-id-casing.md`
 - `docs/adr/0002-artifact-directory-format.md`
+- `docs/adr/0003-hosted-signup-via-admin-api.md`

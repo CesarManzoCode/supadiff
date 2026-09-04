@@ -38,6 +38,12 @@ jobs:
       - name: Run checks (boundary-check, lint, build, typecheck, format, test)
         run: pnpm check
 
+      - name: L14 — documentation consistency gate
+        run: pnpm docs:verify
+
+      - name: L14 — release evidence gate
+        run: pnpm release:evidence
+
   real-targets:
     name: real targets (node 22, pnpm 9.15.0)
     runs-on: ubuntu-latest
@@ -131,3 +137,38 @@ jobs:
 
       - name: L11 — Storage peer comparison (Supalite x2 and Supalite <-> supabase-local)
         run: pnpm test:integration:peer-storage
+
+  hosted-smoke:
+    name: hosted smoke — supabase-hosted L13 (node 22, pnpm 9.15.0)
+    runs-on: ubuntu-latest
+    env:
+      SUPADIFF_HOSTED: "1"
+      SUPADIFF_HOSTED_ACCESS_TOKEN: ${{ secrets.SUPADIFF_HOSTED_ACCESS_TOKEN }}
+      SUPADIFF_HOSTED_PROJECT_REF: ${{ secrets.SUPADIFF_HOSTED_PROJECT_REF }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Prepare pinned pnpm (packageManager field)
+        run: corepack prepare pnpm@9.15.0 --activate
+
+      - name: Install dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Build workspace packages
+        run: pnpm build
+
+      # Runs against a real dedicated throwaway hosted Supabase project. The
+      # no-network safety/budget-refusal cases always run; the real end-to-end
+      # cases self-skip (`describe.skipIf`) when the project secrets are absent
+      # (e.g. on fork PRs), so this job never fails for lack of credentials.
+      - name: L13 — real hosted smoke (Data + Auth + RLS, opt-in/budget refusals, cleanup + recovery)
+        run: pnpm test:integration:hosted-smoke

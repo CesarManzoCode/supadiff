@@ -47,6 +47,57 @@ export {
 } from "./supabase-local/provision.js";
 export { SupabaseLocalTargetSession } from "./supabase-local/session.js";
 
+// L13: real `supabase-hosted` target (public API + Supabase Management API, explicit opt-in).
+export {
+  createSupabaseHostedDriver,
+  type SupabaseHostedDriverOptions,
+} from "./supabase-hosted/driver.js";
+export {
+  defaultHostedConfig,
+  DEFAULT_HOSTED_ROUTE_PREFIXES,
+  type SupabaseHostedTargetConfig,
+  type HostedProjectIdentity,
+} from "./supabase-hosted/types.js";
+export { declareSupabaseHostedCapabilities } from "./supabase-hosted/capabilities.js";
+export {
+  HOSTED_ENV,
+  readHostedCredentials,
+  hostedSecretLiterals,
+  type HostedCredentials,
+} from "./supabase-hosted/credentials.js";
+export {
+  enforceHostedSafety,
+  estimateHostedCostUsd,
+  type HostedSafetyDecision,
+} from "./supabase-hosted/safety.js";
+export {
+  RequestBudget,
+  HttpManagementClient,
+  type ManagementClient,
+  type HostedProjectInfo,
+  type HostedApiKeys,
+} from "./supabase-hosted/management.js";
+export {
+  HostedSafetyError,
+  HostedBudgetError,
+  HostedRateLimitError,
+  HostedCredentialsMissingError,
+  HostedResidentResourcesError,
+  HostedProjectDriftError,
+  ManagementApiError,
+} from "./supabase-hosted/errors.js";
+export {
+  provisionHostedProject,
+  cleanupHostedProject,
+  recoverHostedNamespace,
+  hostedServiceClient,
+  type HostedProvisionedProject,
+  type HostedResourceSnapshot,
+  type HostedCleanupResult,
+} from "./supabase-hosted/provision.js";
+export { SupabaseHostedTargetSession } from "./supabase-hosted/session.js";
+export { newHostedEvidence, type HostedEvidence } from "./supabase-hosted/evidence.js";
+
 // L8: Supalite → real `lite upgrade` → Supabase-local upgrade verification (§12).
 export {
   verifyUpgrade,
