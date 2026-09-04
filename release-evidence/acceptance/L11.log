@@ -1,0 +1,23 @@
+$ pnpm test:integration:peer-storage
+
+===== stdout =====
+
+> supadiff-workspace@1.0.0 test:integration:peer-storage /home/cesarmanzocode/supadiff
+> pnpm --filter @supadiff/targets exec vitest run --config vitest.integration.config.ts test/integration/storage.test.ts test/integration/peer-storage-local.test.ts
+
+
+ RUN  v2.1.8 /home/cesarmanzocode/supadiff/packages/targets
+
+ ✓ test/integration/storage.test.ts (1 test) 15586ms
+   ✓ L11 Storage peer comparison — supalite-sqlite-postgres vs supalite-pglite > runs the same Storage scenario to completion on both real backends with byte-identical evidence 15585ms
+ ✓ test/integration/peer-storage-local.test.ts (1 test) 38711ms
+   ✓ L11 peer Storage: Supabase-local vs Supalite (real ↔ real) > byte-identity holds everywhere except signed-URL redemption, which is the registered signedUrl/signedURL divergence 38709ms
+
+ Test Files  2 passed (2)
+      Tests  2 passed (2)
+   Start at  19:59:25
+   Duration  39.65s (transform 319ms, setup 0ms, collect 1.06s, tests 54.30s, environment 0ms, prepare 138ms)
+
+
+===== stderr =====
+

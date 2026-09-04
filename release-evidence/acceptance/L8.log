@@ -1,0 +1,33 @@
+$ pnpm test:integration:upgrade-local
+
+===== stdout =====
+
+> supadiff-workspace@1.0.0 test:integration:upgrade-local /home/cesarmanzocode/supadiff
+> pnpm --filter @supadiff/targets exec vitest run --config vitest.integration.config.ts test/integration/upgrade-local.test.ts
+
+
+ RUN  v2.1.8 /home/cesarmanzocode/supadiff/packages/targets
+
+ ✓ test/integration/upgrade-local.test.ts (4 tests) 56051ms
+   ✓ L8 verify-upgrade: Supalite → real `lite upgrade` → Supabase-local > transition failure after a real dry-run cleans up and leaks no containers 9612ms
+   ✓ L8 verify-upgrade: Supalite → real `lite upgrade` → Supabase-local > executes the full Supalite → lite upgrade → Supabase-local flow and every property holds 46432ms
+
+ Test Files  1 passed (1)
+      Tests  4 passed (4)
+   Start at  19:58:23
+   Duration  56.74s (transform 172ms, setup 0ms, collect 248ms, tests 56.05s, environment 0ms, prepare 64ms)
+
+
+===== stderr =====
+S0: scaffolding supalite-sqlite-postgres source...
+P0: 3 todos, counters max id 4, 1 auth users
+cloning S0 into baseline B and upgrade-source U...
+running real `lite upgrade --target local --dry-run` from U...
+S0: scaffolding supalite-sqlite-postgres source...
+P0: 3 todos, counters max id 4, 1 auth users
+cloning S0 into baseline B and upgrade-source U...
+running real `lite upgrade --target local --dry-run` from U...
+running real `lite upgrade --target local --local-dir <C>` from U...
+starting baseline B for the lockstep comparisons...
+running the owner-scoped-RLS scenario lockstep on B and C...
+

@@ -57,17 +57,38 @@ layers **L0 through L14**.
   repo-path link, any cited `pnpm`/`supadiff` command that does not exist,
   any stale pre-L13/L14 claim, version inconsistency, a capability without
   evidence, an unparseable divergence entry, or secret material in the docs.
+- `pnpm release:acceptance` (`scripts/release-acceptance.mjs`): executes
+  every acceptance gate against the working tree and records its real exit
+  code + a sanitized (credential-redacted) copy of the full output as a
+  content-addressed artifact under `release-evidence/acceptance/`, plus the
+  target identity and known limitations per gate.
 - `pnpm release:evidence` (`scripts/release-evidence.mjs`): (re)generates
   and verifies `release-evidence/v1.0.0.json` — exact tool/target versions,
   the per-target capability matrix (straight from the driver
   `declare*Capabilities()` functions), the active divergence registry, the
-  acceptance-gate command list, the explicit unproven surfaces, and a stable
-  content hash. Refuses to let a committed manifest's stable content drift
-  silently; verifies no secret material and no fake-target result presented
-  as real Supabase/Supalite evidence.
-- Both gates run in CI's `check` job; a new `hosted-smoke` CI job runs L13.
+  acceptance-gate command list, the explicit unproven surfaces, the
+  **recorded acceptance results** (from `release:acceptance`), and a stable
+  content hash. Refuses to emit a manifest unless every gate has a recorded,
+  passing, digest-consistent result that is not stale against the
+  release-inputs digest; refuses to let a committed manifest's stable
+  content drift silently; verifies no secret material and no fake-target
+  result presented as real Supabase/Supalite evidence. Records **no commit
+  SHA** — the authoritative release revision is the one the `v1.0.0` tag /
+  GitHub Release points to (a commit hash inside the file would be changed
+  by the commit that adds it); only clearly-labelled, non-canonical
+  generation-time provenance (branch, working-tree dirtiness) is kept.
+- Both gates run in CI's `check` job; the `hosted-smoke` CI job runs L13 and
+  is fail-closed — with `SUPADIFF_HOSTED=1` set, absent hosted credentials
+  are a hard error, never a silent skip.
+- `packages/targets/test/unit/management-fault.test.ts`: deterministic,
+  hermetic management-plane fault coverage for `HttpManagementClient` — HTTP
+  429, HTTP 5xx, timeout/network failure, and malformed/unexpected response,
+  each surfacing as a typed `ManagementApiError` with no hidden retry, no
+  secret leak, and no request spent past the failure. Runs in `pnpm check`.
 - Documentation (`README.md`, `CONTRIBUTING.md`, `docs/`) brought to the
-  truthful L0-L14 state.
+  truthful L0-L14 state. The L13 hosted cleanup claim is stated as the
+  precise property proven — the measured owned-resource census returns to
+  the pre-run empty state — not "byte-for-byte".
 
 ### v1.0.0 packaging
 

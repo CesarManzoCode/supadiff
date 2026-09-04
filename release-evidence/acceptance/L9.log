@@ -1,0 +1,21 @@
+$ pnpm test:fault-lab:replay
+
+===== stdout =====
+
+> supadiff-workspace@1.0.0 test:fault-lab:replay /home/cesarmanzocode/supadiff
+> vitest run --config vitest.root.config.ts test/fault-lab/fault-lab.test.ts test/fault-lab/replay.test.ts
+
+
+ RUN  v2.1.8 /home/cesarmanzocode/supadiff
+
+ ✓ test/fault-lab/fault-lab.test.ts (12 tests) 34ms
+ ✓ test/fault-lab/replay.test.ts (6 tests) 157ms
+
+ Test Files  2 passed (2)
+      Tests  18 passed (18)
+   Start at  19:59:20
+   Duration  1.15s (transform 316ms, setup 0ms, collect 906ms, tests 191ms, environment 0ms, prepare 118ms)
+
+
+===== stderr =====
+

@@ -152,6 +152,33 @@ describe("L13 hosted safety + budget refusals (no network)", () => {
   });
 });
 
+/**
+ * Fail-closed acceptance precondition. `SUPADIFF_HOSTED=1 pnpm test:integration:hosted-smoke`
+ * is the canonical L13 gate; it MUST NOT be able to exit 0 by silently skipping the networked
+ * suite. When the opt-in is set but the dedicated smoke-project credentials are absent, this is
+ * a hard failure — never a skip. Without the opt-in, ordinary local/unit runs skip it.
+ */
+describe.skipIf(!HOSTED || HAS_CREDS)(
+  "L13 hosted acceptance precondition (SUPADIFF_HOSTED=1)",
+  () => {
+    it("fails closed when hosted credentials are absent under the opt-in", () => {
+      const missing = (
+        [
+          ["SUPADIFF_HOSTED_ACCESS_TOKEN", process.env["SUPADIFF_HOSTED_ACCESS_TOKEN"]],
+          ["SUPADIFF_HOSTED_PROJECT_REF", process.env["SUPADIFF_HOSTED_PROJECT_REF"]],
+        ] as const
+      )
+        .filter(([, v]) => !v)
+        .map(([k]) => k);
+      expect.fail(
+        `SUPADIFF_HOSTED=1 is set but ${missing.join(", ")} ${missing.length === 1 ? "is" : "are"} ` +
+          `absent. The L13 hosted acceptance gate cannot pass by skipping the real hosted suite — ` +
+          `provide the dedicated smoke-project credentials, or run without SUPADIFF_HOSTED=1.`,
+      );
+    });
+  },
+);
+
 describe.skipIf(!HOSTED || !HAS_CREDS)(
   "L13 real hosted smoke — dedicated project supadiff-v1-smoke",
   () => {
@@ -241,7 +268,9 @@ describe.skipIf(!HOSTED || !HAS_CREDS)(
         0,
       );
 
-      // Deterministic cleanup: the project is byte-for-byte back to empty, ownership schema gone.
+      // Deterministic cleanup: the measured owned-resource census returns to the pre-run empty
+      // state — 0 public tables, 0 auth users, 0 Storage buckets, 0 SupaDiff ownership schema.
+      // (This is the scoped property actually proven; it is not a byte-for-byte project image.)
       expect(target.teardownStatus).toBe("complete");
       const after = await census();
       expect(after).toEqual({ tables: 0, users: 0, buckets: 0, ownership: 0 });

@@ -15,14 +15,20 @@ command (L10), Storage peer comparison including Supalite ↔ Supabase-local
 (L11), seeded scenario generation (L12), the real `supabase-hosted` target
 (L13, `SUPADIFF_HOSTED=1 pnpm test:integration:hosted-smoke` against a real
 hosted project), and the documentation/release-evidence gate (L14, `pnpm
-docs:verify` + `pnpm release:evidence`).
+docs:verify` + `pnpm release:acceptance` + `pnpm release:evidence` — the
+last refuses to emit a manifest unless every acceptance gate has a recorded,
+passing, digest-consistent result).
 
 **Accommodated / not exercised within L13:** `supabase-hosted`
 `create-ephemeral` mode is implemented and safety-gated but has no real CI
 gate (needs an org id + billing); `auth.signUp` on hosted uses the real
 GoTrue admin API + password grant rather than the public mailer flow (see
 `docs/adr/0003-hosted-signup-via-admin-api.md`); hosted `lite upgrade
---target hosted` transitions are not exercised. Realtime, Edge Functions, a
+--target hosted` transitions are not exercised. The hosted cleanup gate
+proves that the measured owned-resource census (public tables, auth users,
+Storage buckets, SupaDiff ownership schema) returns to the pre-run empty
+state — not that the hosted project is byte-for-byte identical to its
+initial image. Realtime, Edge Functions, a
 dashboard/UI, a generic fuzzing framework, and a generic database reducer
 were never in scope for any layer (see the Architecture Contract's own
 non-goals, §20).

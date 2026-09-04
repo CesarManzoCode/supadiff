@@ -4,19 +4,32 @@
 // Produces the versioned, self-verifying release-evidence manifest for SupaDiff from the
 // *actual* repository state — exact tool/target versions, the per-target capability matrix
 // (straight from the driver `declare*Capabilities()` functions), the active divergence
-// registry, the acceptance-gate command list, and the explicit unproven surfaces. It then
-// checks a set of invariants (version consistency, no secret material, every cited
-// acceptance command exists, every capability carries evidence, no fake-target result
-// presented as real Supabase/Supalite evidence) and, if a manifest for this version is
-// already committed, refuses to let its stable content drift silently.
+// registry, the acceptance-gate command list, the explicit unproven surfaces, and — new in
+// v1 — the *recorded acceptance results* (`release-evidence/acceptance/results.json`,
+// produced by `pnpm release:acceptance`). It then checks a set of invariants (version
+// consistency, no secret material, every cited acceptance command exists, every capability
+// carries evidence, no fake-target result presented as real Supabase/Supalite evidence,
+// and — for every acceptance gate — a recorded, passing, digest-consistent, non-stale
+// result) and, if a manifest for this version is already committed, refuses to let its
+// stable content drift silently.
+//
+// It does NOT re-execute the gates: `pnpm release:acceptance` does that and records what
+// happened; this gate proves that record is present, green, untampered, and current.
 
-import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, existsSync, writeFileSync, readdirSync } from "node:fs";
-import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import process from "node:process";
+import {
+  ROOT,
+  canonical,
+  sha256,
+  sha256File,
+  collectReleaseInputs,
+  releaseInputsDigest,
+} from "./release-inputs.mjs";
+import { ACCEPTANCE_GATES } from "./acceptance-gates.mjs";
 
-const ROOT = path.resolve(import.meta.dirname, "..");
 const read = (p) => readFileSync(path.join(ROOT, p), "utf8");
 const readJson = (p) => JSON.parse(read(p));
 
@@ -24,185 +37,30 @@ const readJson = (p) => JSON.parse(read(p));
 const errors = [];
 const fail = (m) => errors.push(m);
 
-const rootPkg = readJson("package.json");
-const VERSION = rootPkg.version;
-
-// ---------------------------------------------------------------------------
-// Toolchain + pinned target versions (from the files that actually pin them)
-// ---------------------------------------------------------------------------
-
-const targetsPkg = readJson("packages/targets/package.json");
-
-let targetsMod;
-let specMod;
-try {
-  targetsMod = await import(distPath("targets"));
-  specMod = await import(distPath("spec"));
-} catch (e) {
-  console.error(`release:evidence: build the workspace first (\`pnpm build\`): ${String(e)}`);
-  process.exit(1);
-}
-
-const pinnedImages = targetsMod.SUPABASE_LOCAL_PINNED_IMAGES ?? {};
-const cliPkg = targetsMod.SUPABASE_CLI_PACKAGE ?? {};
-
-const toolchain = {
-  node: rootPkg.engines?.node ?? null,
-  packageManager: rootPkg.packageManager ?? null,
-  typescript: devDep("typescript"),
-  vitest: devDep("vitest"),
-  supabaseCli: cliPkg.version ?? null,
-  "@supabase/lite": targetsPkg.dependencies?.["@supabase/lite"] ?? null,
-  "@supabase/supabase-js": targetsPkg.dependencies?.["@supabase/supabase-js"] ?? null,
-  postgres: targetsPkg.dependencies?.["postgres"] ?? null,
-  "fast-check": readJson("packages/generators/package.json").dependencies?.["fast-check"] ?? null,
-};
-
-// ---------------------------------------------------------------------------
-// Capability matrix (real, from the driver declarations)
-// ---------------------------------------------------------------------------
-
-function capMatrix(caps) {
-  return caps
-    .map((c) => ({
-      id: c.id,
-      level: c.level,
-      evidenceKinds: (c.evidence ?? []).map((e) => e.kind),
-    }))
-    .sort((a, b) => a.id.localeCompare(b.id));
-}
-
-const targets = {
-  "supabase-hosted": {
-    driver: "real",
-    transport: "public API + Supabase Management API",
-    optIn: "SUPADIFF_HOSTED=1 + spec.safety.allowHosted",
-    capabilities: capMatrix(targetsMod.declareSupabaseHostedCapabilities()),
-  },
-  "supabase-local": {
-    driver: "real",
-    transport: `pinned supabase CLI ${cliPkg.version} over Docker Compose`,
-    capabilities: capMatrix(targetsMod.declareSupabaseLocalCapabilities()),
-  },
-  "supalite-sqlite": {
-    driver: "real",
-    transport: "real @supabase/lite@0.9.0 lite start subprocess",
-    capabilities: capMatrix(targetsMod.declareSupaliteCapabilities("supalite-sqlite")),
-  },
-  "supalite-sqlite-postgres": {
-    driver: "real",
-    transport: "real @supabase/lite@0.9.0 lite start subprocess",
-    capabilities: capMatrix(targetsMod.declareSupaliteCapabilities("supalite-sqlite-postgres")),
-  },
-  "supalite-pglite": {
-    driver: "real",
-    transport: "real @supabase/lite@0.9.0 lite start subprocess",
-    capabilities: capMatrix(targetsMod.declareSupaliteCapabilities("supalite-pglite")),
-  },
-  "supalite-postgres": {
-    driver: "real",
-    transport: "real @supabase/lite@0.9.0 lite start subprocess + local PostgreSQL",
-    capabilities: capMatrix(targetsMod.declareSupaliteCapabilities("supalite-postgres")),
-  },
-  fake: {
-    driver: "test-infrastructure-only",
-    transport: "scripted FakeTargetDriver — NEVER evidence about Supabase or Supalite (§15.2)",
-    capabilities: [],
-  },
-};
-
-// ---------------------------------------------------------------------------
-// Divergence registry (real, parsed)
-// ---------------------------------------------------------------------------
-
-const divDir = path.join(ROOT, "divergences", "active");
-const divergences = [];
-for (const f of readdirSync(divDir)
-  .filter((n) => n.endsWith(".json"))
-  .sort()) {
-  let entry;
-  try {
-    entry = specMod.parseKnownDivergence(JSON.parse(readFileSync(path.join(divDir, f), "utf8")));
-  } catch (e) {
-    fail(`divergences/active/${f} does not parse: ${String(e)}`);
-    continue;
-  }
-  divergences.push({
-    id: entry.id,
-    title: entry.title,
-    status: entry.status,
-    reference: entry.referenceSelector,
-    candidate: entry.candidateSelector,
-    scenario: entry.scenarioSelector,
-    observable: entry.observableSelector,
-    verifiedAt: entry.verifiedAt ?? null,
-    expiresAt: entry.expiresAt ?? null,
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Acceptance gates (the commands that actually prove each layer)
-// ---------------------------------------------------------------------------
-
-const acceptanceGates = [
-  {
-    id: "core",
-    command: "pnpm check",
-    proves: "L0-L5 deterministic core + boundary/lint/build/typecheck/format/unit",
-  },
-  {
-    id: "L6",
-    command: "pnpm test:integration:supalite",
-    proves: "real Supalite family, all four backends",
-  },
-  {
-    id: "L7",
-    command: "pnpm test:integration:peer-data-auth-rls",
-    proves: "Supalite ↔ supabase-local Data + Auth + native RLS + failure modes",
-  },
-  {
-    id: "L8",
-    command: "pnpm test:integration:upgrade-local",
-    proves: "real Supalite → lite upgrade --target local → supabase-local verification",
-  },
-  {
-    id: "L9",
-    command: "pnpm test:fault-lab:replay",
-    proves: "dogfood fault lab + supadiff replay",
-  },
-  { id: "L10", command: "pnpm test:fault-lab:reduce", proves: "state-aware reducer / ddmin" },
-  {
-    id: "L11",
-    command: "pnpm test:integration:peer-storage",
-    proves: "Storage byte-identity peer comparison (Supalite×2 and Supalite ↔ supabase-local)",
-  },
-  { id: "L12", command: "pnpm test:generators", proves: "seeded scenario generation domain model" },
-  {
-    id: "L12-smoke",
-    command: "pnpm test:generated-smoke",
-    proves: "one generated scenario executed live",
-  },
-  {
-    id: "L13",
-    command: "SUPADIFF_HOSTED=1 pnpm test:integration:hosted-smoke",
-    proves:
-      "real hosted Supabase project: Data + Auth + RLS end to end, opt-in/budget refusals, deterministic cleanup + crash recovery",
-  },
-  {
-    id: "L14-docs",
-    command: "pnpm docs:verify",
-    proves: "documentation ↔ implementation ↔ acceptance-command consistency",
-  },
-  {
-    id: "L14-evidence",
-    command: "pnpm release:evidence",
-    proves: "this manifest — versioned, secret-free, invariant-checked",
-  },
+const SECRET_PATTERNS = [
+  /\bsbp_[A-Za-z0-9]{20,}/,
+  /\bsb_secret_[A-Za-z0-9]{10,}/,
+  /\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}/,
 ];
 
 // ---------------------------------------------------------------------------
-// Explicit unsupported / unproven surfaces
+// Stable release inputs (shared with the acceptance recorder)
 // ---------------------------------------------------------------------------
+
+const { inputs, errors: inputErrors, rootPkg } = await collectReleaseInputs();
+for (const e of inputErrors) fail(e);
+const VERSION = inputs.version;
+const inputsDigest = releaseInputsDigest(inputs);
+
+// ---------------------------------------------------------------------------
+// Acceptance gates + explicit unproven surfaces
+// ---------------------------------------------------------------------------
+
+const acceptanceGates = ACCEPTANCE_GATES.map((g) => ({
+  id: g.id,
+  command: g.command,
+  proves: g.proves,
+}));
 
 const unprovenSurfaces = [
   "Realtime, Edge Functions, and any dashboard/UI — never in scope (Architecture Contract §20).",
@@ -211,26 +69,117 @@ const unprovenSurfaces = [
   "supabase-hosted `auth.signUp` uses the real GoTrue admin API + real password grant (not the public mailer flow) because the dedicated smoke project has no SMTP and the project-scoped token cannot toggle mailer autoconfirm — see docs/adr/0003-hosted-signup-via-admin-api.md.",
   "The L10 reducer and L12 generator are scoped to SupaDiff's own Data+Auth+RLS domain model, not general-purpose tools.",
   "Storage byte preservation across `lite upgrade` is `unsupported` and is rejected before any mutation when required (not silently skipped).",
+  "The L13 hosted cleanup gate proves the measured owned-resource census (public tables, auth users, Storage buckets, SupaDiff ownership schema) returns to the pre-run empty state — not that the hosted project is byte-for-byte identical to its initial image.",
+  "`pnpm release:evidence` verifies the recorded acceptance results for consistency, non-failure, and freshness against the release-inputs digest; it does not itself re-run the gates.",
 ];
 
 // ---------------------------------------------------------------------------
-// Scenario fixtures (with digests)
+// Recorded acceptance results (from `pnpm release:acceptance`)
 // ---------------------------------------------------------------------------
 
-const scenarios = [];
-const scnDir = path.join(ROOT, "scenarios", "deterministic");
-for (const f of readdirSync(scnDir)
-  .filter((n) => n.endsWith(".json"))
-  .sort()) {
+const RESULTS_REL = "release-evidence/acceptance/results.json";
+/** @type {{ id:string,command:string,executed:boolean,exitCode:number,status:string,artifact:string,artifactSha256:string }[]} */
+let acceptanceResults = [];
+
+if (!existsSync(path.join(ROOT, RESULTS_REL))) {
+  fail(
+    `${RESULTS_REL} is absent — run \`pnpm release:acceptance\` to execute the acceptance gates ` +
+      `and record their real results before generating release evidence.`,
+  );
+} else {
+  let recorded;
   try {
-    const spec = specMod.parseScenarioSpec(JSON.parse(readFileSync(path.join(scnDir, f), "utf8")));
-    scenarios.push({
-      file: `scenarios/deterministic/${f}`,
-      id: spec.id,
-      digest: specMod.computeScenarioDigest(spec),
-    });
+    recorded = readJson(RESULTS_REL);
   } catch (e) {
-    fail(`scenarios/deterministic/${f} does not parse: ${String(e)}`);
+    recorded = null;
+    fail(`${RESULTS_REL} does not parse: ${String(e)}`);
+  }
+  if (recorded) {
+    if (recorded.format !== "supadiff.release-acceptance") {
+      fail(`${RESULTS_REL}: unexpected format ${JSON.stringify(recorded.format)}`);
+    }
+    if (recorded.releaseVersion !== VERSION) {
+      fail(
+        `${RESULTS_REL}: recorded releaseVersion ${JSON.stringify(recorded.releaseVersion)} != ${JSON.stringify(VERSION)}`,
+      );
+    }
+    if (recorded.releaseInputsDigest !== inputsDigest) {
+      fail(
+        `${RESULTS_REL}: STALE — recorded against release-inputs digest ` +
+          `${recorded.releaseInputsDigest} but the working tree now produces ${inputsDigest}. ` +
+          `Re-run \`pnpm release:acceptance\`.`,
+      );
+    }
+
+    const byId = new Map((recorded.gates ?? []).map((g) => [g.id, g]));
+    for (const gate of ACCEPTANCE_GATES) {
+      const r = byId.get(gate.id);
+      if (!r) {
+        fail(`acceptance gate "${gate.id}" (\`${gate.command}\`) has no recorded result`);
+        continue;
+      }
+      // The evidence gate verifies the others; it does not record its own prior run.
+      if (gate.id === "L14-evidence") {
+        if (r.status !== "self-verifying") {
+          fail(
+            `acceptance gate "L14-evidence": expected status "self-verifying", got ${JSON.stringify(r.status)}`,
+          );
+        }
+        continue;
+      }
+      if (r.command !== gate.command) {
+        fail(
+          `acceptance gate "${gate.id}": recorded command ${JSON.stringify(r.command)} != ` +
+            `${JSON.stringify(gate.command)}`,
+        );
+      }
+      if (r.executed !== true) fail(`acceptance gate "${gate.id}": not marked executed`);
+      if (r.status !== "pass" || r.exitCode !== 0) {
+        fail(
+          `acceptance gate "${gate.id}": recorded result is ${JSON.stringify(r.status)} ` +
+            `(exit ${r.exitCode}) — a release manifest requires every gate green`,
+        );
+      }
+      const artAbs = path.join(ROOT, r.artifact ?? "");
+      if (!r.artifact || !existsSync(artAbs)) {
+        fail(
+          `acceptance gate "${gate.id}": evidence artifact ${JSON.stringify(r.artifact)} missing`,
+        );
+      } else {
+        const actual = sha256File(artAbs);
+        if (actual !== r.artifactSha256) {
+          fail(
+            `acceptance gate "${gate.id}": ${r.artifact} digest ${actual} != recorded ` +
+              `${r.artifactSha256} — the evidence artifact has changed since it was recorded`,
+          );
+        }
+        // The log must itself be secret-free.
+        const logText = read(r.artifact);
+        for (const re of SECRET_PATTERNS) {
+          if (re.test(logText)) fail(`${r.artifact}: matches a secret pattern ${re}`);
+        }
+        const envRefLocal = process.env.SUPADIFF_HOSTED_PROJECT_REF;
+        if (envRefLocal && envRefLocal.length > 8 && logText.includes(envRefLocal)) {
+          fail(`${r.artifact}: contains the live hosted project ref`);
+        }
+      }
+    }
+
+    acceptanceResults = ACCEPTANCE_GATES.map((gate) => {
+      const r = byId.get(gate.id) ?? {};
+      return {
+        id: gate.id,
+        command: gate.command,
+        executed: r.executed === true,
+        exitCode: r.exitCode ?? null,
+        status: r.status ?? "missing",
+        targetIdentity: r.targetIdentity ?? null,
+        artifact: r.artifact ?? null,
+        artifactSha256: r.artifactSha256 ?? null,
+        notes: r.notes ?? [],
+        limitations: gate.limitations,
+      };
+    });
   }
 }
 
@@ -240,38 +189,51 @@ for (const f of readdirSync(scnDir)
 
 const stable = {
   version: VERSION,
-  toolchain,
-  pinnedImages,
-  targets,
-  divergences,
+  toolchain: inputs.toolchain,
+  pinnedImages: inputs.pinnedImages,
+  targets: inputs.targets,
+  divergences: inputs.divergences,
   acceptanceGates,
   unprovenSurfaces,
-  scenarios,
+  scenarios: inputs.scenarios,
+  releaseInputsDigest: inputsDigest,
+  acceptanceResults,
 };
 
 const stableHash = sha256(canonical(stable));
 
-let git = {};
+// Non-canonical generation-time provenance. This is NOT the release revision: committing
+// this file changes HEAD, so no commit hash recorded here can be the final v1.0.0 commit.
+// The authoritative release commit is the one the `v1.0.0` git tag / GitHub Release points
+// to. Only the working-tree branch + dirtiness at generation time is recorded, clearly
+// labelled, and never fed into `stableHash`.
+const provenance = {
+  canonical: false,
+  meaning:
+    "generation-time working-tree state only — NOT the v1.0.0 release revision. " +
+    "The authoritative release commit is the one the `v1.0.0` tag / GitHub Release points to.",
+  generatedAt: new Date().toISOString(),
+  generatedOnBranch: null,
+  workingTreeDirtyAtGeneration: null,
+};
 try {
-  git = {
-    commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT }).toString().trim(),
-    branch: execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: ROOT })
-      .toString()
-      .trim(),
-    dirty:
-      execFileSync("git", ["status", "--porcelain"], { cwd: ROOT }).toString().trim().length > 0,
-  };
+  provenance.generatedOnBranch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+    cwd: ROOT,
+  })
+    .toString()
+    .trim();
+  provenance.workingTreeDirtyAtGeneration =
+    execFileSync("git", ["status", "--porcelain"], { cwd: ROOT }).toString().trim().length > 0;
 } catch {
-  git = { commit: null, branch: null, dirty: null };
+  /* not a git checkout — leave the fields null */
 }
 
 const manifest = {
   format: "supadiff.release-evidence",
-  formatVersion: "1.0",
+  formatVersion: "1.1",
   ...stable,
   stableHash,
-  git,
-  generatedAt: new Date().toISOString(),
+  provenance,
 };
 
 // ---------------------------------------------------------------------------
@@ -296,7 +258,7 @@ for (const g of acceptanceGates) {
   }
 }
 
-for (const [kind, t] of Object.entries(targets)) {
+for (const [kind, t] of Object.entries(inputs.targets)) {
   if (kind === "fake") {
     if (t.driver !== "test-infrastructure-only")
       fail("fake target must be marked test-infrastructure-only");
@@ -311,15 +273,11 @@ for (const [kind, t] of Object.entries(targets)) {
     }
   }
 }
-if (divergences.length === 0) fail("no divergence registry entries found");
+if (inputs.divergences.length === 0) fail("no divergence registry entries found");
 
 // No secret material anywhere in the manifest.
 const asText = JSON.stringify(manifest);
-for (const re of [
-  /\bsbp_[A-Za-z0-9]{20,}/,
-  /\bsb_secret_[A-Za-z0-9]{10,}/,
-  /\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}/,
-]) {
+for (const re of SECRET_PATTERNS) {
   if (re.test(asText)) fail(`release evidence manifest matches a secret pattern ${re}`);
 }
 const envRef = process.env.SUPADIFF_HOSTED_PROJECT_REF;
@@ -364,37 +322,29 @@ console.log(`release:evidence passed. Wrote ${outJson} (stableHash ${stableHash.
 
 // ---------------------------------------------------------------------------
 
-function devDep(name) {
-  return rootPkg.devDependencies?.[name] ?? null;
-}
-function distPath(pkg) {
-  const p = path.join(ROOT, "packages", pkg, "dist", "index.js");
-  if (!existsSync(p)) throw new Error(`${pkg} not built`);
-  return p;
-}
-function canonical(v) {
-  if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
-  if (v && typeof v === "object") {
-    return `{${Object.keys(v)
-      .sort()
-      .map((k) => `${JSON.stringify(k)}:${canonical(v[k])}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(v ?? null);
-}
-function sha256(s) {
-  return "sha256:" + createHash("sha256").update(s).digest("hex");
-}
 function renderMarkdown(m) {
   const lines = [];
   lines.push(`# SupaDiff v${m.version} — release evidence`);
   lines.push("");
-  lines.push(`Generated: ${m.generatedAt}${m.git.commit ? ` · commit \`${m.git.commit}\`` : ""}`);
   lines.push(`Stable content hash: \`${m.stableHash}\``);
+  lines.push(`Release-inputs digest: \`${m.releaseInputsDigest}\``);
   lines.push("");
   lines.push("This manifest is produced from the repository working tree by");
   lines.push("`pnpm release:evidence` and re-verified on every run. No secrets, no");
   lines.push("fake-target result presented as real Supabase/Supalite evidence.");
+  lines.push("");
+  lines.push(
+    "**Release revision.** This file records no commit SHA: committing it changes `HEAD`, so no",
+  );
+  lines.push(
+    "hash written here could be the final release commit. The authoritative v1.0.0 revision is the",
+  );
+  lines.push(
+    `commit the \`v1.0.0\` git tag and GitHub Release point to. Generation-time provenance ` +
+      `(branch \`${m.provenance.generatedOnBranch ?? "—"}\`, working tree ` +
+      `${m.provenance.workingTreeDirtyAtGeneration ? "dirty" : "clean"} at ` +
+      `${m.provenance.generatedAt}) is non-canonical and excluded from the stable hash.`,
+  );
   lines.push("");
   lines.push("## Toolchain / pinned versions");
   lines.push("");
@@ -423,10 +373,25 @@ function renderMarkdown(m) {
     lines.push(`- \`${d.id}\` (${d.status}) — ${d.title}`);
   }
   lines.push("");
-  lines.push("## Acceptance gates");
+  lines.push("## Acceptance gates — recorded results");
   lines.push("");
-  for (const g of m.acceptanceGates) lines.push(`- \`${g.command}\` — ${g.proves}`);
+  lines.push(
+    "Each result below was produced by `pnpm release:acceptance` executing the exact command",
+  );
+  lines.push("shown and recording its real exit code + a sanitized copy of the full output as a");
+  lines.push("content-addressed artifact. `pnpm release:evidence` re-verifies every digest.");
   lines.push("");
+  for (const r of m.acceptanceResults) {
+    lines.push(`### \`${r.command}\` (${r.id})`);
+    lines.push("");
+    lines.push(`- result: **${r.status}** (exit ${r.exitCode}, executed: ${r.executed})`);
+    lines.push(`- target identity: ${r.targetIdentity ?? "—"}`);
+    lines.push(`- evidence artifact: \`${r.artifact}\``);
+    lines.push(`- artifact digest: \`${r.artifactSha256}\``);
+    if (r.notes && r.notes.length) lines.push(`- notes: ${r.notes.join("; ")}`);
+    lines.push(`- limitations: ${r.limitations}`);
+    lines.push("");
+  }
   lines.push("## Explicit unproven / unsupported surfaces");
   lines.push("");
   for (const u of m.unprovenSurfaces) lines.push(`- ${u}`);

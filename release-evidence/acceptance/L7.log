@@ -1,0 +1,24 @@
+$ pnpm test:integration:peer-data-auth-rls
+
+===== stdout =====
+
+> supadiff-workspace@1.0.0 test:integration:peer-data-auth-rls /home/cesarmanzocode/supadiff
+> pnpm --filter @supadiff/targets exec vitest run --config vitest.integration.config.ts test/integration/peer-data-auth-rls.test.ts
+
+
+ RUN  v2.1.8 /home/cesarmanzocode/supadiff/packages/targets
+
+ ✓ test/integration/peer-data-auth-rls.test.ts (5 tests) 119922ms
+   ✓ L7 peer: Supalite (supalite-sqlite-postgres) vs Supabase-local — Data + Auth + RLS + readback > runs the same scenario on both real targets and every compared path agrees 40711ms
+   ✓ L7 supabase-local failure-mode handling > port allocation: two scaffolded projects get distinct ids and distinct leased API ports 13868ms
+   ✓ L7 supabase-local failure-mode handling > identity mismatch: a wrong requested CLI version finalizes the run inconclusive, never a silent result 32401ms
+   ✓ L7 supabase-local failure-mode handling > target death: killing the container stack mid-run makes the engine finalize inconclusive (target-lost), not a false pass 32889ms
+
+ Test Files  1 passed (1)
+      Tests  5 passed (5)
+   Start at  19:56:21
+   Duration  120.84s (transform 276ms, setup 0ms, collect 501ms, tests 119.92s, environment 0ms, prepare 67ms)
+
+
+===== stderr =====
+

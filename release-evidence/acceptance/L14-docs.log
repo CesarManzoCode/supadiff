@@ -1,0 +1,11 @@
+$ pnpm docs:verify
+
+===== stdout =====
+
+> supadiff-workspace@1.0.0 docs:verify /home/cesarmanzocode/supadiff
+> node scripts/docs-verify.mjs
+
+docs:verify passed: 15 doc files checked, 0 problems.
+
+===== stderr =====
+

@@ -28,6 +28,7 @@
     "test:generators": "pnpm --filter @supadiff/generators test",
     "test:generated-smoke": "pnpm --filter @supadiff/generators test:live-smoke",
     "docs:verify": "node scripts/docs-verify.mjs",
+    "release:acceptance": "node scripts/release-acceptance.mjs",
     "release:evidence": "node scripts/release-evidence.mjs",
     "supadiff": "node packages/cli/dist/bin.js"
   },

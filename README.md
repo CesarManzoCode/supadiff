@@ -108,7 +108,8 @@ SUPADIFF_HOSTED=1 pnpm test:integration:hosted-smoke   # L13: real supabase-host
 
 # Documentation + release-evidence gate (no network, no credentials)
 pnpm docs:verify                    # L14: docs <-> implementation <-> acceptance-command consistency
-pnpm release:evidence               # L14: (re)generate + verify release-evidence/v1.0.0.json
+pnpm release:acceptance            # L14: run every acceptance gate, record real exit codes + sanitized logs
+pnpm release:evidence               # L14: verify the recorded results + (re)generate release-evidence/v1.0.0.json
 ```
 
 Every one of these talks to a real target over real HTTP via the real
@@ -152,8 +153,9 @@ packages/
   reducer/     state-aware reduction (L10) — ddmin over the dependency graph, acceptance oracle
   generators/  seeded scenario generation (L12) — fast-check adapter, Data+Auth+RLS domain model
   cli/         supadiff CLI: run / compare / inspect / replay / reduce / verify-upgrade
-scripts/docs-verify.mjs, release-evidence.mjs   L14 documentation + release-evidence gates
+scripts/docs-verify.mjs, release-evidence.mjs, release-acceptance.mjs   L14 documentation + release-evidence gates
 release-evidence/v1.0.0.json                    versioned, self-verifying release manifest (L14)
+release-evidence/acceptance/                    recorded acceptance-gate results + sanitized per-gate logs (L14)
 scenarios/deterministic/              canonical L6/L7/L11 scenario fixtures (L13 reuses the L7 peer scenario)
 divergences/active/                   known-divergence registry (signedUrl/signedURL + the L8 lite-upgrade sequence entry)
 test/fixtures/, test/fault-lab/       the L0-L5 acceptance fixtures and the L9 dogfood fault lab

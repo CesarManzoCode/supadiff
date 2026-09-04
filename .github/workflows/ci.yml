@@ -166,9 +166,21 @@ jobs:
       - name: Build workspace packages
         run: pnpm build
 
-      # Runs against a real dedicated throwaway hosted Supabase project. The
-      # no-network safety/budget-refusal cases always run; the real end-to-end
-      # cases self-skip (`describe.skipIf`) when the project secrets are absent
-      # (e.g. on fork PRs), so this job never fails for lack of credentials.
+      # Fail-closed acceptance contract: with SUPADIFF_HOSTED=1 set, this job must
+      # represent a REAL hosted result. If the repository secrets are not configured
+      # (they are required for the protected `main` branch and same-repo PRs), stop
+      # here with a clear message rather than letting the suite "pass" by skipping.
+      - name: Assert hosted smoke-project credentials are present
+        run: |
+          if [ -z "${SUPADIFF_HOSTED_ACCESS_TOKEN}" ] || [ -z "${SUPADIFF_HOSTED_PROJECT_REF}" ]; then
+            echo "::error::SUPADIFF_HOSTED=1 but SUPADIFF_HOSTED_ACCESS_TOKEN / SUPADIFF_HOSTED_PROJECT_REF are not configured. The L13 hosted acceptance gate cannot pass by skipping the real suite."
+            exit 1
+          fi
+
+      # Runs against the real dedicated throwaway hosted Supabase project. The
+      # no-network safety/budget-refusal cases always run; with SUPADIFF_HOSTED=1
+      # the real end-to-end suite is fail-closed — absent credentials are a hard
+      # error (see the guard step above and the test's acceptance-precondition
+      # block), never a silent skip.
       - name: L13 — real hosted smoke (Data + Auth + RLS, opt-in/budget refusals, cleanup + recovery)
-        run: pnpm test:integration:hosted-smoke
+        run: SUPADIFF_HOSTED=1 pnpm test:integration:hosted-smoke

@@ -1,0 +1,25 @@
+$ pnpm test:generated-smoke
+
+===== stdout =====
+
+> supadiff-workspace@1.0.0 test:generated-smoke /home/cesarmanzocode/supadiff
+> pnpm --filter @supadiff/generators test:live-smoke
+
+
+> @supadiff/generators@1.0.0 test:live-smoke /home/cesarmanzocode/supadiff/packages/generators
+> vitest run --config vitest.live-smoke.config.ts
+
+
+ RUN  v2.1.8 /home/cesarmanzocode/supadiff/packages/generators
+
+ ✓ test/live-smoke/generated-smoke.test.ts (1 test) 30944ms
+   ✓ L12 bounded live sample: generated scenarios against a real Supalite target > 5 generated scenarios each run to completion on supalite-sqlite-postgres 30943ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  20:01:13
+   Duration  31.88s (transform 253ms, setup 0ms, collect 498ms, tests 30.94s, environment 0ms, prepare 57ms)
+
+
+===== stderr =====
+

@@ -190,11 +190,22 @@ credentials, no Cartesian target matrix, no Docker. A third job,
 `supabase-local` stack brought up by the pinned `supabase` CLI. A fourth
 job, `hosted-smoke`, runs `SUPADIFF_HOSTED=1 pnpm
 test:integration:hosted-smoke` — L13 against a real dedicated hosted
-Supabase project — only when the `SUPADIFF_HOSTED_ACCESS_TOKEN` /
-`SUPADIFF_HOSTED_PROJECT_REF` secrets are present (its no-network safety and
-budget-refusal cases run regardless). The `docs:verify` and
-`release:evidence` gates (L14) run in the `check` job. All jobs use
-`concurrency` to cancel superseded runs on the same ref.
+Supabase project. It is **fail-closed**: with `SUPADIFF_HOSTED=1` set, a
+missing `SUPADIFF_HOSTED_ACCESS_TOKEN` / `SUPADIFF_HOSTED_PROJECT_REF` is a
+hard error (a guard step plus the test's acceptance-precondition block),
+never a silent skip — so a green `hosted-smoke` job always means the real
+hosted suite actually ran (its no-network safety and budget-refusal cases
+run regardless of the opt-in). The `docs:verify` and `release:evidence`
+gates (L14) run in the `check` job. All jobs use `concurrency` to cancel
+superseded runs on the same ref.
+
+The `release:evidence` gate no longer trusts that a gate passed merely
+because its command exists: `pnpm release:acceptance` executes every
+acceptance gate, records its real exit code and a sanitized copy of the full
+output as a content-addressed artifact under `release-evidence/acceptance/`,
+and `pnpm release:evidence` refuses to emit a manifest unless every gate has
+a recorded, passing, digest-consistent result that is not stale against the
+release-inputs digest.
 
 ## Honesty gates actually enforced
 

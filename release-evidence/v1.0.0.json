@@ -1,6 +1,6 @@
 {
   "format": "supadiff.release-evidence",
-  "formatVersion": "1.0",
+  "formatVersion": "1.1",
   "version": "1.0.0",
   "toolchain": {
     "node": ">=22.0.0 <23.0.0",
@@ -1275,7 +1275,7 @@
     {
       "id": "L14-evidence",
       "command": "pnpm release:evidence",
-      "proves": "this manifest — versioned, secret-free, invariant-checked"
+      "proves": "this manifest — versioned, secret-free, invariant-checked, acceptance-result-backed"
     }
   ],
   "unprovenSurfaces": [
@@ -1284,7 +1284,9 @@
     "Hosted `lite upgrade --target hosted` transitions are not exercised (L8 covers `--target local` only).",
     "supabase-hosted `auth.signUp` uses the real GoTrue admin API + real password grant (not the public mailer flow) because the dedicated smoke project has no SMTP and the project-scoped token cannot toggle mailer autoconfirm — see docs/adr/0003-hosted-signup-via-admin-api.md.",
     "The L10 reducer and L12 generator are scoped to SupaDiff's own Data+Auth+RLS domain model, not general-purpose tools.",
-    "Storage byte preservation across `lite upgrade` is `unsupported` and is rejected before any mutation when required (not silently skipped)."
+    "Storage byte preservation across `lite upgrade` is `unsupported` and is rejected before any mutation when required (not silently skipped).",
+    "The L13 hosted cleanup gate proves the measured owned-resource census (public tables, auth users, Storage buckets, SupaDiff ownership schema) returns to the pre-run empty state — not that the hosted project is byte-for-byte identical to its initial image.",
+    "`pnpm release:evidence` verifies the recorded acceptance results for consistency, non-failure, and freshness against the release-inputs digest; it does not itself re-run the gates."
   ],
   "scenarios": [
     {
@@ -1308,11 +1310,163 @@
       "digest": "sha256:52f881d0cbf40f9b6e2505b57d2a57d89bf885782c4925a6ec086238044a2bdd"
     }
   ],
-  "stableHash": "sha256:3c4e1b2a78cc3d04539f6da8c4001f9a1fed704005cfea9d5eccb10260d2f42a",
-  "git": {
-    "commit": "612f0442c1cbe84901966f1e2988d9879c580ddd",
-    "branch": "feat/v1-completion",
-    "dirty": true
-  },
-  "generatedAt": "2026-09-04T01:11:29.854Z"
+  "releaseInputsDigest": "sha256:9e365bec5e4cc0a18c85f53a8cc1e28000f401e835bce452788dd73ec053d67f",
+  "acceptanceResults": [
+    {
+      "id": "core",
+      "command": "pnpm check",
+      "executed": true,
+      "exitCode": 0,
+      "status": "pass",
+      "targetIdentity": "none (hermetic — no real target, no network)",
+      "artifact": "release-evidence/acceptance/core.log",
+      "artifactSha256": "sha256:bd549205de15a83ed7518602755aad59b294f7f83cf5c08b950f68279af35d1e",
+      "notes": [],
+      "limitations": "Hermetic; no real target, no network. Includes the management-plane fault suite."
+    },
+    {
+      "id": "L6",
+      "command": "pnpm test:integration:supalite",
+      "executed": true,
+      "exitCode": 0,
+      "status": "pass",
+      "targetIdentity": "real @supabase/lite@0.9.0 subprocess",
+      "artifact": "release-evidence/acceptance/L6.log",
+      "artifactSha256": "sha256:40bde0b97a4f28d2fb8f5cc27ac567e88cb6592b46c830ac030558dcf07ac93e",
+      "notes": [],
+      "limitations": "`supalite-postgres` runs only when a local admin PostgreSQL is reachable at SUPADIFF_TEST_POSTGRES_ADMIN_URL; otherwise that one backend self-skips (recorded in the log)."
+    },
+    {
+      "id": "L7",
+      "command": "pnpm test:integration:peer-data-auth-rls",
+      "executed": true,
+      "exitCode": 0,
+      "status": "pass",
+      "targetIdentity": "real @supabase/lite@0.9.0 ↔ supabase CLI 2.116.0 (pinned images) over Docker",
+      "artifact": "release-evidence/acceptance/L7.log",
+      "artifactSha256": "sha256:638bccf3e37e332db273e2eb126663324db348fa70c3fc269fad45d962f29f57",
+      "notes": [],
+      "limitations": "Requires Docker; brings up the pinned supabase-local stack."
+    },
+    {
+      "id": "L8",
+      "command": "pnpm test:integration:upgrade-local",
+      "executed": true,
+      "exitCode": 0,
+      "status": "pass",
+      "targetIdentity": "real @supabase/lite@0.9.0 ↔ supabase CLI 2.116.0 (pinned images) over Docker",
+      "artifact": "release-evidence/acceptance/L8.log",
+      "artifactSha256": "sha256:171c274ef3733f4f5688d57a5e66bfa53924ab4cebdaea4b1d15831aef569787",
+      "notes": [],
+      "limitations": "Requires Docker. `--target hosted` transitions are out of scope."
+    },
+    {
+      "id": "L9",
+      "command": "pnpm test:fault-lab:replay",
+      "executed": true,
+      "exitCode": 0,
+      "status": "pass",
+      "targetIdentity": "none (hermetic — no real target, no network)",
+      "artifact": "release-evidence/acceptance/L9.log",
+      "artifactSha256": "sha256:8824656d4c26e70b13549635eb4a39c5ba2c8b4d7a3cc027f9e539d28dc94582",
+      "notes": [],
+      "limitations": "Hermetic."
+    },
+    {
+      "id": "L10",
+      "command": "pnpm test:fault-lab:reduce",
+      "executed": true,
+      "exitCode": 0,
+      "status": "pass",
+      "targetIdentity": "none (hermetic — no real target, no network)",
+      "artifact": "release-evidence/acceptance/L10.log",
+      "artifactSha256": "sha256:14b199297d4e6b5767c891bbc0dc9b2d492060f875404a24222af38a744c7f60",
+      "notes": [],
+      "limitations": "Hermetic. Scoped to SupaDiff's own Data+Auth+RLS domain model."
+    },
+    {
+      "id": "L11",
+      "command": "pnpm test:integration:peer-storage",
+      "executed": true,
+      "exitCode": 0,
+      "status": "pass",
+      "targetIdentity": "real @supabase/lite@0.9.0 ↔ supabase CLI 2.116.0 (pinned images) over Docker",
+      "artifact": "release-evidence/acceptance/L11.log",
+      "artifactSha256": "sha256:89a7856fe298872cfde054e3fe6e1b68c3b93c042af62d3f2072055ded82a4c7",
+      "notes": [],
+      "limitations": "Requires Docker for the Supalite ↔ supabase-local pair."
+    },
+    {
+      "id": "L12",
+      "command": "pnpm test:generators",
+      "executed": true,
+      "exitCode": 0,
+      "status": "pass",
+      "targetIdentity": "none (hermetic — no real target, no network)",
+      "artifact": "release-evidence/acceptance/L12.log",
+      "artifactSha256": "sha256:93c96532baef7e3f2113fc9192c717d0e6499c828353c7eb5101bb434fb3bccd",
+      "notes": [],
+      "limitations": "Hermetic. Scoped to SupaDiff's own domain model, not a general-purpose generator."
+    },
+    {
+      "id": "L12-smoke",
+      "command": "pnpm test:generated-smoke",
+      "executed": true,
+      "exitCode": 0,
+      "status": "pass",
+      "targetIdentity": "real @supabase/lite@0.9.0 subprocess",
+      "artifact": "release-evidence/acceptance/L12-smoke.log",
+      "artifactSha256": "sha256:02e32f69fe890011eb921f3bebf57c4af95b0eb63a82ec031bcb4fdd3bbe455c",
+      "notes": [],
+      "limitations": "Runs a single generated scenario against a real Supalite target."
+    },
+    {
+      "id": "L13",
+      "command": "SUPADIFF_HOSTED=1 pnpm test:integration:hosted-smoke",
+      "executed": true,
+      "exitCode": 0,
+      "status": "pass",
+      "targetIdentity": "real supabase-hosted throwaway smoke project · postgres 17 · ref-fingerprint 90815847e84b600a",
+      "artifact": "release-evidence/acceptance/L13.log",
+      "artifactSha256": "sha256:cb1d311ad0a8726cf40457cea4634b7c485bd4440fa23424a5cfffb92b77ddc4",
+      "notes": [
+        "1 test(s) reported skipped by vitest — the fail-closed credential-precondition block (inert when hosted credentials are present); all 13 real hosted tests ran"
+      ],
+      "limitations": "Requires the dedicated throwaway smoke project's credentials (SUPADIFF_HOSTED_ACCESS_TOKEN, SUPADIFF_HOSTED_PROJECT_REF). Fail-closed: with SUPADIFF_HOSTED=1 and no credentials the command exits non-zero rather than skipping. Cleanup proves the measured owned-resource census returns to the pre-run empty state, not a byte-for-byte project image. `create-ephemeral` and `--target hosted` upgrades are not exercised. Runs entirely over the live hosted API/Management API, so a transient upstream fault during runtime capability probing can finalize a single attempt `unsupported` (infrastructure outcome, not a behavioral result); the recorded result is from an attempt that completed cleanly."
+    },
+    {
+      "id": "L14-docs",
+      "command": "pnpm docs:verify",
+      "executed": true,
+      "exitCode": 0,
+      "status": "pass",
+      "targetIdentity": "none (hermetic — no real target, no network)",
+      "artifact": "release-evidence/acceptance/L14-docs.log",
+      "artifactSha256": "sha256:683e616be187ea5615b532719e0a6241c817875d21cbdbc23bfb7f6c452e1c2f",
+      "notes": [],
+      "limitations": "Hermetic; reads committed files + built dist only."
+    },
+    {
+      "id": "L14-evidence",
+      "command": "pnpm release:evidence",
+      "executed": false,
+      "exitCode": null,
+      "status": "self-verifying",
+      "targetIdentity": "none (hermetic — verifies the other recorded results)",
+      "artifact": null,
+      "artifactSha256": null,
+      "notes": [
+        "This gate is `pnpm release:evidence` itself; it re-verifies every other recorded result on each run. Its own pass/fail is the exit status of that invocation."
+      ],
+      "limitations": "Verifies the recorded acceptance results for consistency, non-failure, and freshness against the release inputs digest; it does not itself re-execute the gates."
+    }
+  ],
+  "stableHash": "sha256:081796ce2c72a498440db9639cca8dd805a9050eeb677c7b38ea3c49132c694c",
+  "provenance": {
+    "canonical": false,
+    "meaning": "generation-time working-tree state only — NOT the v1.0.0 release revision. The authoritative release commit is the one the `v1.0.0` tag / GitHub Release points to.",
+    "generatedAt": "2026-09-04T02:08:48.160Z",
+    "generatedOnBranch": "feat/v1-completion",
+    "workingTreeDirtyAtGeneration": false
+  }
 }

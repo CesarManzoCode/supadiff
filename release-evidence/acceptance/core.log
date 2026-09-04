@@ -1,0 +1,203 @@
+$ pnpm check
+
+===== stdout =====
+
+> supadiff-workspace@1.0.0 check /home/cesarmanzocode/supadiff
+> pnpm boundary-check && pnpm lint && pnpm build && pnpm typecheck && pnpm format:check && pnpm test
+
+
+> supadiff-workspace@1.0.0 boundary-check /home/cesarmanzocode/supadiff
+> node scripts/boundary-check.mjs
+
+Boundary check passed: 6 packages scanned, 0 violations.
+
+> supadiff-workspace@1.0.0 lint /home/cesarmanzocode/supadiff
+> eslint . --max-warnings=0
+
+
+> supadiff-workspace@1.0.0 build /home/cesarmanzocode/supadiff
+> pnpm -r --workspace-concurrency=1 run build
+
+Scope: 6 of 7 workspace projects
+
+> @supadiff/spec@1.0.0 build /home/cesarmanzocode/supadiff/packages/spec
+> tsc -b
+
+
+> @supadiff/engine@1.0.0 build /home/cesarmanzocode/supadiff/packages/engine
+> tsc -b
+
+
+> @supadiff/reducer@1.0.0 build /home/cesarmanzocode/supadiff/packages/reducer
+> tsc -b
+
+
+> @supadiff/targets@1.0.0 build /home/cesarmanzocode/supadiff/packages/targets
+> tsc -b
+
+
+> @supadiff/generators@1.0.0 build /home/cesarmanzocode/supadiff/packages/generators
+> tsc -b
+
+
+> supadiff@1.0.0 build /home/cesarmanzocode/supadiff/packages/cli
+> tsc -b
+
+
+> supadiff-workspace@1.0.0 typecheck /home/cesarmanzocode/supadiff
+> pnpm -r --workspace-concurrency=1 run typecheck
+
+Scope: 6 of 7 workspace projects
+
+> @supadiff/spec@1.0.0 typecheck /home/cesarmanzocode/supadiff/packages/spec
+> tsc --noEmit -p tsconfig.json
+
+
+> @supadiff/engine@1.0.0 typecheck /home/cesarmanzocode/supadiff/packages/engine
+> tsc --noEmit -p tsconfig.json
+
+
+> @supadiff/reducer@1.0.0 typecheck /home/cesarmanzocode/supadiff/packages/reducer
+> tsc --noEmit -p tsconfig.json
+
+
+> @supadiff/targets@1.0.0 typecheck /home/cesarmanzocode/supadiff/packages/targets
+> tsc --noEmit -p tsconfig.json
+
+
+> @supadiff/generators@1.0.0 typecheck /home/cesarmanzocode/supadiff/packages/generators
+> tsc --noEmit -p tsconfig.json
+
+
+> supadiff@1.0.0 typecheck /home/cesarmanzocode/supadiff/packages/cli
+> tsc --noEmit -p tsconfig.json
+
+
+> supadiff-workspace@1.0.0 format:check /home/cesarmanzocode/supadiff
+> prettier --check .
+
+Checking formatting...
+All matched files use Prettier code style!
+
+> supadiff-workspace@1.0.0 test /home/cesarmanzocode/supadiff
+> pnpm -r --workspace-concurrency=1 run test
+
+Scope: 6 of 7 workspace projects
+
+> @supadiff/spec@1.0.0 test /home/cesarmanzocode/supadiff/packages/spec
+> vitest run
+
+
+ RUN  v2.1.8 /home/cesarmanzocode/supadiff/packages/spec
+
+ ✓ test/canonicalization.test.ts (8 tests) 8ms
+ ✓ test/known-divergence.test.ts (5 tests) 21ms
+ ✓ test/target.test.ts (6 tests) 32ms
+ ✓ test/comparison-policy.test.ts (4 tests) 41ms
+ ✓ test/scenario.test.ts (14 tests) 57ms
+
+ Test Files  5 passed (5)
+      Tests  37 passed (37)
+   Start at  20:05:54
+   Duration  781ms (transform 223ms, setup 0ms, collect 1.36s, tests 159ms, environment 2ms, prepare 392ms)
+
+
+> @supadiff/engine@1.0.0 test /home/cesarmanzocode/supadiff/packages/engine
+> vitest run
+
+
+ RUN  v2.1.8 /home/cesarmanzocode/supadiff/packages/engine
+
+ ✓ test/observation/coverage.test.ts (9 tests) 8ms
+ ✓ test/comparison-honesty/mutation-and-benign.test.ts (13 tests) 13ms
+ ✓ test/comparison-honesty/rule-algebra.test.ts (34 tests) 22ms
+ ✓ test/comparison-honesty/target-selector-and-capability.test.ts (28 tests) 17ms
+ ✓ test/artifact/bundle.test.ts (5 tests) 33ms
+ ✓ test/secret-corpus/no-leak.test.ts (3 tests) 34ms
+ ✓ test/observation/projectors.test.ts (5 tests) 41ms
+ ✓ test/execution/capabilities-and-secrets.test.ts (9 tests) 41ms
+ ✓ test/execution/execution-plan.test.ts (16 tests) 54ms
+ ✓ test/execution/lockstep-and-events.test.ts (9 tests) 60ms
+
+ Test Files  10 passed (10)
+      Tests  131 passed (131)
+   Start at  20:05:55
+   Duration  1.16s (transform 650ms, setup 0ms, collect 5.66s, tests 324ms, environment 3ms, prepare 1.32s)
+
+
+> @supadiff/reducer@1.0.0 test /home/cesarmanzocode/supadiff/packages/reducer
+> vitest run
+
+
+ RUN  v2.1.8 /home/cesarmanzocode/supadiff/packages/reducer
+
+No test files found, exiting with code 0
+
+
+> @supadiff/targets@1.0.0 test /home/cesarmanzocode/supadiff/packages/targets
+> vitest run
+
+
+ RUN  v2.1.8 /home/cesarmanzocode/supadiff/packages/targets
+
+ ✓ test/unit/management-fault.test.ts (6 tests) 9ms
+
+ Test Files  1 passed (1)
+      Tests  6 passed (6)
+   Start at  20:05:57
+   Duration  668ms (transform 172ms, setup 0ms, collect 236ms, tests 9ms, environment 0ms, prepare 64ms)
+
+
+> @supadiff/generators@1.0.0 test /home/cesarmanzocode/supadiff/packages/generators
+> vitest run
+
+
+ RUN  v2.1.8 /home/cesarmanzocode/supadiff/packages/generators
+
+ ✓ test/generation.test.ts (6 tests) 64749ms
+   ✓ L12 generation: preconditions are honored (§10.2) > never emits update/delete without an insert already tracked for that table 931ms
+   ✓ L12 generation: preconditions are honored (§10.2) > records a skipped-precondition decision for every update/delete the raw draw asked for but the model rejected 985ms
+   ✓ L12 generation: 10,000 validation-only generations (§L12 acceptance) > every generated scenario parses and canonicalizes without throwing, across many seeds 62764ms
+
+ Test Files  1 passed (1)
+      Tests  6 passed (6)
+   Start at  20:05:58
+   Duration  65.46s (transform 127ms, setup 0ms, collect 257ms, tests 64.75s, environment 0ms, prepare 71ms)
+
+
+> supadiff@1.0.0 test /home/cesarmanzocode/supadiff/packages/cli
+> vitest run
+
+
+ RUN  v2.1.8 /home/cesarmanzocode/supadiff/packages/cli
+
+ ✓ test/artifact-io.test.ts (4 tests) 17ms
+{"format":"supadiff.cli-result","formatVersion":"1","command":"inspect","ok":true,"state":"inspected","exitCode":0,"summary":"target \"target.reference\" kind \"fake\"","outcomeCounts":{},"target":{"id":"target.reference","kind":"fake","runtime":{"runtime":"node","version":"22.10.0"},"config":{"scriptId":"cli-reference","script":{"identity":{"targetKind":"fake","implementation":"fake-target","implementationVersion":"1.0.0","runtime":{"runtime":"node","version":"22.10.0"},"clientVersion":"0.0.0","platform":{"os":"linux","arch":"x64"},"effectiveConfigDigest":"sha256:0000000000000000000000000000000000000000000000000000000000000000","observedAt":"2026-09-03T00:00:00.000Z"},"declaredCapabilities":[{"id":"auth.password.signup","version":"1.0.0","level":"exact","constraints":{},"evidence":[],"observed":false},{"id":"data.select","version":"1.0.0","level":"exact","constraints":{},"evidence":[],"observed":false}],"steps":{"step.signup":{"category":"success","status":200,"body":{"status":"success","user":{"id":"owner-abc-123","email":"owner@example.test"},"session":{"access_token":"t","refresh_token":"r","expires_in":1}}}},"teardownStatus":"complete"}},"credentialRefs":[],"lifecycle":{"allocation":"provision-new","isolation":"fresh-instance","readinessTimeoutMs":2000,"teardownTimeoutMs":2000,"cleanup":"always","keepOnFailure":"deny"},"safety":{"allowHosted":false,"allowHostedCreate":false,"allowHostedDestructive":false,"maxHostedCostUsd":0}}}
+{"format":"supadiff.cli-result","formatVersion":"1","command":"run","ok":true,"state":"complete","exitCode":0,"artifactPath":"/tmp/supadiff-cli-out-2Er4gZ/run.supadiff","summary":"run run-scn.cli-test-1: complete, 0 comparison result(s)","outcomeCounts":{}}
+{"format":"supadiff.cli-result","formatVersion":"1","command":"run","ok":true,"state":"complete","exitCode":0,"artifactPath":"/tmp/supadiff-cli-out-m48gu9/run.supadiff","summary":"run run-scn.cli-test-1: complete, 0 comparison result(s)","outcomeCounts":{}}
+{"format":"supadiff.cli-result","formatVersion":"1","command":"run","ok":true,"state":"complete","exitCode":0,"artifactPath":"/tmp/supadiff-cli-out-Cl2PAU/run.supadiff","summary":"run run-scn.cli-test-1: complete, 3 comparison result(s)","outcomeCounts":{"match-exact":3}}
+{"format":"supadiff.cli-result","formatVersion":"1","command":"run","ok":true,"state":"complete","exitCode":0,"artifactPath":"/tmp/supadiff-cli-out-gS1wme/run.supadiff","summary":"run run-scn.cli-test-1: complete, 0 comparison result(s)","outcomeCounts":{}}
+{"format":"supadiff.cli-result","formatVersion":"1","command":"run","ok":true,"state":"complete","exitCode":0,"artifactPath":"/tmp/supadiff-cli-out-g5wABe/run.supadiff","summary":"run run-scn.cli-test-1: complete, 0 comparison result(s)","outcomeCounts":{}}
+{"format":"supadiff.cli-result","formatVersion":"1","command":"run","ok":true,"state":"complete","exitCode":0,"artifactPath":"/tmp/supadiff-cli-out-mLSJK2/run.supadiff","summary":"run run-scn.cli-test-1: complete, 3 comparison result(s)","outcomeCounts":{"new-divergence":1,"match-exact":2}}
+{"format":"supadiff.cli-result","formatVersion":"1","command":"run","ok":true,"state":"complete","exitCode":0,"artifactPath":"/tmp/supadiff-cli-out-2V5YSW/run.supadiff","summary":"run run-scn.cli-test-1: complete, 3 comparison result(s)","outcomeCounts":{"match-exact":3}}
+{"format":"supadiff.cli-result","formatVersion":"1","command":"inspect","ok":true,"state":"inspected","exitCode":0,"summary":"0 known-divergence entries","outcomeCounts":{},"divergences":[]}
+ ✓ test/inspect-command.test.ts (6 tests) 151ms
+{"format":"supadiff.cli-result","formatVersion":"1","command":"run","ok":true,"state":"complete","exitCode":0,"artifactPath":"/tmp/supadiff-cli-out-HZsU3f/run.supadiff","summary":"run run-scn.cli-test-1: complete, 0 comparison result(s)","outcomeCounts":{}}
+{"format":"supadiff.cli-result","formatVersion":"1","command":"run","ok":true,"state":"complete","exitCode":0,"artifactPath":"/tmp/supadiff-cli-out-Gwt2x0/run.supadiff","summary":"run run-scn.cli-test-1: complete, 0 comparison result(s)","outcomeCounts":{}}
+ ✓ test/compare-command.test.ts (4 tests) 160ms
+{"format":"supadiff.cli-result","formatVersion":"1","command":"run","ok":true,"state":"complete","exitCode":0,"artifactPath":"/tmp/supadiff-cli-out-VzEKS2/run.supadiff","summary":"run run-scn.cli-test-1: complete, 3 comparison result(s)","outcomeCounts":{"match-exact":3}}
+{"format":"supadiff.cli-result","formatVersion":"1","command":"run","ok":true,"state":"complete","exitCode":0,"artifactPath":"/tmp/supadiff-cli-out-U8Irza/run.supadiff","summary":"run run-scn.cli-test-1: complete, 3 comparison result(s)","outcomeCounts":{"match-exact":3}}
+ ✓ test/run-command.test.ts (10 tests) 191ms
+
+ Test Files  4 passed (4)
+      Tests  24 passed (24)
+   Start at  20:07:04
+   Duration  1.40s (transform 505ms, setup 0ms, collect 2.23s, tests 519ms, environment 1ms, prepare 366ms)
+
+
+===== stderr =====
+include: test/**/*.test.ts
+exclude:  dist/**, node_modules/**
+supadiff run: at least one --target is required
+supadiff inspect: unknown subject "wat"
+
