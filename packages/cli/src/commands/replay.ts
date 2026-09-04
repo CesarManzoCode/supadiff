@@ -86,8 +86,16 @@ export async function replayCommand(args: ParsedArgs): Promise<number> {
   const policy = await loadPolicy(args.flags.policy, artifact.scenario, { required: true });
   const knownDivergences = await loadKnownDivergences(args.flags.divergences);
 
-  const referenceDriver = buildDriverForSpec(referenceSpec, artifact.scenario.resources);
-  const candidateDriver = buildDriverForSpec(candidateSpec, artifact.scenario.resources);
+  const referenceDriver = buildDriverForSpec(
+    referenceSpec,
+    artifact.scenario.resources,
+    artifact.scenario.client,
+  );
+  const candidateDriver = buildDriverForSpec(
+    candidateSpec,
+    artifact.scenario.resources,
+    artifact.scenario.client,
+  );
   const handles: TargetHandle[] = [
     { slot: referenceSpec.id, spec: referenceSpec, driver: referenceDriver },
     { slot: candidateSpec.id, spec: candidateSpec, driver: candidateDriver },

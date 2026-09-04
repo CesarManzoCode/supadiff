@@ -1,4 +1,10 @@
-import type { ResourceDeclaration, StableId, TargetCapability, TargetSpec } from "@supadiff/spec";
+import type {
+  ClientContract,
+  ResourceDeclaration,
+  StableId,
+  TargetCapability,
+  TargetSpec,
+} from "@supadiff/spec";
 import type {
   ProvisionContext,
   RecoveryRecord,
@@ -7,6 +13,8 @@ import type {
 } from "@supadiff/engine/spi";
 import { createWorkdir } from "../shared/workdir.js";
 import { SUPABASE_CLI_PACKAGE } from "../shared/supabase-cli-cache.js";
+import { loadSupabaseJs } from "../shared/package-cache.js";
+import { resolveClientContract } from "../shared/supabase-js-client.js";
 import { declareSupabaseLocalCapabilities } from "./capabilities.js";
 import { forceCleanupProject, scaffoldSupabaseLocalProject, startStack } from "./provision.js";
 import { SupabaseLocalTargetSession } from "./session.js";
@@ -16,6 +24,14 @@ export interface SupabaseLocalDriverOptions {
   scenarioResources: readonly ResourceDeclaration[];
   /** CLI version override (L8 upgrade verification drives the same driver at two versions). */
   cliVersion?: string;
+  /**
+   * The scenario's `ScenarioSpec.client` — the single source of truth for which exact
+   * `@supabase/supabase-js` build this target is driven through (and reports as
+   * `TargetIdentity.clientVersion`). The wiring layer that holds the parsed `ScenarioSpec`
+   * passes it here; omitted → the historical `2.97.0` baseline. An unregistered version
+   * fails closed (`resolveClientContract`). Never an env var.
+   */
+  client?: ClientContract;
 }
 
 function defaultConfig(): SupabaseLocalTargetConfig {
@@ -59,6 +75,10 @@ export function createSupabaseLocalDriver(options: SupabaseLocalDriverOptions): 
       // falls back to the pinned default — never from `spec.package.version`, which the
       // engine owns as the *requested* identity it checks against the observed one (§2.7).
       const cliVersion = options.cliVersion ?? SUPABASE_CLI_PACKAGE.version;
+      // Resolve + install the exact client the scenario asks for BEFORE bringing the stack
+      // up, so an unregistered client version fails closed without provisioning anything.
+      const clientProfile = resolveClientContract(options.client);
+      const client = await loadSupabaseJs(clientProfile);
       const workdir = createWorkdir("sd-supabase-local");
       const project = await scaffoldSupabaseLocalProject(workdir.path, config, cliVersion);
       // Record the recovery identifier (§4.2: write-before-allocate is done by the engine's
@@ -66,7 +86,7 @@ export function createSupabaseLocalDriver(options: SupabaseLocalDriverOptions): 
       ctx.vault.put("note", `project:${project.projectId}`);
       await startStack(project);
       const handleId = `${ctx.runNamespace}` as StableId;
-      return new SupabaseLocalTargetSession(handleId, project, ctx.vault, resources);
+      return new SupabaseLocalTargetSession(handleId, project, ctx.vault, resources, client);
     },
 
     async recover(record: RecoveryRecord): Promise<void> {

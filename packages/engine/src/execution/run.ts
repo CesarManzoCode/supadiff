@@ -16,7 +16,11 @@ import {
   type TargetSpec,
 } from "@supadiff/spec";
 import { getOperationDefinition } from "@supadiff/spec";
-import { buildExecutionPlan, TargetIdentityMismatchError } from "../planning/build-plan.js";
+import {
+  buildExecutionPlan,
+  ClientIdentityMismatchError,
+  TargetIdentityMismatchError,
+} from "../planning/build-plan.js";
 import type {
   ActorBinding,
   RawOperationResult,
@@ -88,7 +92,7 @@ export interface MultiTargetRunResult {
    * The frozen `ExecutionPlan` (§2.3, §5.1), present whenever every target reached
    * runtime-capability-probed with a real observed identity and no identity mismatch was
    * found. Absent for `invalid`/`unsupported` runs that never reached that point, and for
-   * an `inconclusive` run caused specifically by a target identity mismatch (§2.7).
+   * an `inconclusive` run caused specifically by a target or client identity mismatch (§2.7).
    */
   plan?: ExecutionPlan;
 }
@@ -296,7 +300,10 @@ export async function runScenario(
         now: clock,
       });
     } catch (err) {
-      if (err instanceof TargetIdentityMismatchError) {
+      if (
+        err instanceof TargetIdentityMismatchError ||
+        err instanceof ClientIdentityMismatchError
+      ) {
         await teardownAll("failure");
         return finalize("inconclusive");
       }

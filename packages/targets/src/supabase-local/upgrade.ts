@@ -14,6 +14,9 @@ import { createClient } from "@supabase/supabase-js";
 import { spawnManaged } from "../shared/process.js";
 import { leasePort } from "../shared/ports.js";
 import { ensureSupaliteInstall, SUPALITE_PACKAGE } from "../shared/package-cache.js";
+// L8 verifies the `@supabase/lite@0.9.0` → Supabase-local transition specifically; the
+// source is always the v1.0.0 baseline profile, passed explicitly rather than defaulted.
+import { SUPALITE_PROFILE_0_9_0 } from "../supalite/package-profile.js";
 import {
   ensureSupabaseCli,
   supabaseCliBin,
@@ -222,7 +225,7 @@ async function cloneWorkdir(src: string, dst: string): Promise<void> {
     filter: (from) => path.basename(from) !== "node_modules",
   });
   rmSync(path.join(dst, "node_modules"), { recursive: true, force: true });
-  const cacheDir = await ensureSupaliteInstall();
+  const cacheDir = await ensureSupaliteInstall(SUPALITE_PROFILE_0_9_0);
   symlinkSync(path.join(cacheDir, "node_modules"), path.join(dst, "node_modules"), "dir");
 }
 
@@ -422,6 +425,7 @@ export async function verifyUpgrade(
       "sqlite-postgres",
       supaliteConfig(readiness),
       undefined,
+      SUPALITE_PROFILE_0_9_0,
     );
     await applySchemaResource(s0, FIXTURE_SCHEMA);
     await startServer(s0);
@@ -642,6 +646,10 @@ export async function verifyUpgrade(
       publishableKey: bKeys.publishableKey,
       secretKey: bKeys.secretKey,
       config: supaliteConfig(readiness),
+      // Retained byte-clone of S0 (the 0.9.0 baseline); it links the same package cache.
+      profile: SUPALITE_PROFILE_0_9_0,
+      createClient,
+      clientVersion: SUPALITE_PROFILE_0_9_0.client.version,
     };
     await startServer(baseline);
     const bService = createClient(baseline.baseUrl, baseline.secretKey, {

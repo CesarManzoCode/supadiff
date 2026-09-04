@@ -1,9 +1,11 @@
 import { mkdirSync, writeFileSync, existsSync, rmSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import type { createClient as CreateClientFn } from "@supabase/supabase-js";
 import type { ExactPackageIdentity, ExactRuntimeIdentity, StableId } from "@supadiff/spec";
 import { leasePort } from "../shared/ports.js";
-import { linkSupaliteInstall, SUPALITE_PACKAGE } from "../shared/package-cache.js";
+import { linkSupaliteInstall, loadSupabaseJsForProfile } from "../shared/package-cache.js";
+import { DEFAULT_SUPALITE_PROFILE, type SupalitePackageProfile } from "./package-profile.js";
 import { spawnManaged, waitForHttpReady, type ManagedProcess } from "../shared/process.js";
 import type { SupaliteBackend, SupaliteTargetConfig } from "./types.js";
 
@@ -15,6 +17,12 @@ export interface SupaliteProvisionedProject {
   readonly publishableKey: string;
   readonly secretKey: string;
   readonly config: SupaliteTargetConfig;
+  /** The exact pinned package profile this project was provisioned against. */
+  readonly profile: SupalitePackageProfile;
+  /** `createClient` from the profile's own `@supabase/supabase-js` install. */
+  readonly createClient: typeof CreateClientFn;
+  /** The `@supabase/supabase-js` version actually loaded (== `profile.client.version`). */
+  readonly clientVersion: string;
   process?: ManagedProcess;
 }
 
@@ -81,9 +89,11 @@ export async function scaffoldSupaliteProject(
   backend: SupaliteBackend,
   config: SupaliteTargetConfig,
   postgresUrl: string | undefined,
+  profile: SupalitePackageProfile = DEFAULT_SUPALITE_PROFILE,
 ): Promise<SupaliteProvisionedProject> {
   mkdirSync(workdirPath, { recursive: true });
-  await linkSupaliteInstall(workdirPath);
+  await linkSupaliteInstall(workdirPath, profile);
+  const { createClient, version: clientVersion } = await loadSupabaseJsForProfile(profile);
 
   await runLiteToCompletion(workdirPath, ["init", ...(backend === "pglite" ? ["--pglite"] : [])]);
 
@@ -144,6 +154,9 @@ export async function scaffoldSupaliteProject(
     publishableKey,
     secretKey,
     config,
+    profile,
+    createClient,
+    clientVersion,
   };
 }
 
@@ -198,11 +211,13 @@ export function cleanupWorkdir(workdirPath: string): void {
   if (existsSync(workdirPath)) rmSync(workdirPath, { recursive: true, force: true, maxRetries: 3 });
 }
 
-export function supalitePackageIdentity(): ExactPackageIdentity {
+export function supalitePackageIdentity(
+  profile: SupalitePackageProfile = DEFAULT_SUPALITE_PROFILE,
+): ExactPackageIdentity {
   return {
-    name: SUPALITE_PACKAGE.name,
-    version: SUPALITE_PACKAGE.version,
-    integrity: SUPALITE_PACKAGE.integrity,
+    name: profile.lite.name,
+    version: profile.lite.version,
+    integrity: profile.lite.integrity,
   };
 }
 
