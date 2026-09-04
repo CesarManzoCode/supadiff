@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type {
   ActorSpec,
   JsonObject,
@@ -17,6 +17,7 @@ import type {
   TeardownReport,
 } from "@supadiff/engine/spi";
 import { revealSecretRefs } from "../shared/secrets.js";
+import type { LoadedSupabaseClientFactory } from "../shared/package-cache.js";
 import { dataResultToRaw, dispatchRestOperation } from "../shared/rest-dispatch.js";
 import { readResourceText } from "../shared/resources.js";
 import { SUPABASE_LOCAL_PINNED_IMAGES } from "../shared/supabase-cli-cache.js";
@@ -52,17 +53,26 @@ export class SupabaseLocalTargetSession implements TargetSession {
   #project: SupabaseLocalProvisionedProject;
   #vault: SecretVault;
   #resources: ReadonlyMap<StableId, { source: JsonObject; sensitivity: string }>;
+  /**
+   * `createClient` + version from the exact `@supabase/supabase-js` install that matches
+   * the scenario's `ScenarioSpec.client` (resolved by the driver). Every client this
+   * session builds comes from here — never a static import — so a run whose scenario asks
+   * for client `2.114.0` genuinely drives `supabase-local` with `2.114.0`.
+   */
+  #client: LoadedSupabaseClientFactory;
 
   constructor(
     handleId: StableId,
     project: SupabaseLocalProvisionedProject,
     vault: SecretVault,
     resources: ReadonlyMap<StableId, { source: JsonObject; sensitivity: string }>,
+    client: LoadedSupabaseClientFactory,
   ) {
     this.handleId = handleId;
     this.#project = project;
     this.#vault = vault;
     this.#resources = resources;
+    this.#client = client;
   }
 
   get project(): SupabaseLocalProvisionedProject {
@@ -76,7 +86,7 @@ export class SupabaseLocalTargetSession implements TargetSession {
       implementationVersion: this.#project.cliVersion,
       runtime: nodeRuntimeIdentity(),
       backend: { backend: "postgres", version: String(this.#project.config.dbMajorVersion) },
-      clientVersion: "2.97.0",
+      clientVersion: this.#client.version,
       cliVersion: this.#project.cliVersion,
       serviceVersions: Object.fromEntries(
         Object.entries(SUPABASE_LOCAL_PINNED_IMAGES).map(([k, v]) => [k, v.split(":").pop()!]),
@@ -133,14 +143,14 @@ export class SupabaseLocalTargetSession implements TargetSession {
     if (actor?.role === "authenticated" && actor.session) {
       headers["Authorization"] = `Bearer ${this.#vault.reveal(actor.session)}`;
     }
-    return createClient(this.#project.baseUrl, key, {
+    return this.#client.createClient(this.#project.baseUrl, key, {
       auth: { persistSession: false, autoRefreshToken: false },
       global: { headers },
     });
   }
 
   #serviceClient(): SupabaseClient {
-    return createClient(this.#project.baseUrl, this.#project.secretKey, {
+    return this.#client.createClient(this.#project.baseUrl, this.#project.secretKey, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
   }

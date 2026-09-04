@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ActorSpec, JsonObject, StableId } from "@supadiff/spec";
 import type {
   ActorBinding,
@@ -19,7 +19,6 @@ import {
   stopServer,
   cleanupWorkdir,
   nodeRuntimeIdentity,
-  supalitePackageIdentity,
   type SupaliteProvisionedProject,
 } from "./provision.js";
 import type { SupaliteBackend, SupaliteTargetKind } from "./types.js";
@@ -51,18 +50,17 @@ export class SupaliteTargetSession implements TargetSession {
   }
 
   async identify(): Promise<TargetIdentity> {
+    const profile = this.#project.profile;
     return {
       targetKind: this.#kind,
-      implementation: "@supabase/lite",
-      implementationVersion: supalitePackageIdentity().version,
-      packageIntegrity: supalitePackageIdentity().integrity,
+      implementation: profile.lite.name,
+      implementationVersion: profile.lite.version,
+      packageIntegrity: profile.lite.integrity,
       sourceRevision: undefined,
-      unknownSourceRevisionReason:
-        "npm registry exposes no gitHead/provenance for @supabase/lite@0.9.0; only tarball " +
-        "integrity/hashes are verifiable (Architecture Contract C-006, GT §2.1).",
+      unknownSourceRevisionReason: profile.sourceRevisionReason,
       runtime: nodeRuntimeIdentity(),
       backend: { backend: this.#backend },
-      clientVersion: "2.97.0",
+      clientVersion: this.#project.clientVersion,
       platform: { os: process.platform, arch: process.arch },
       effectiveConfigDigest: `sha256:${createHash("sha256")
         .update(
@@ -113,14 +111,14 @@ export class SupaliteTargetSession implements TargetSession {
     if (actor?.role === "authenticated" && actor.session) {
       headers["Authorization"] = `Bearer ${this.#vault.reveal(actor.session)}`;
     }
-    return createClient(this.#project.baseUrl, key, {
+    return this.#project.createClient(this.#project.baseUrl, key, {
       auth: { persistSession: false, autoRefreshToken: false },
       global: { headers },
     });
   }
 
   #serviceClient(): SupabaseClient {
-    return createClient(this.#project.baseUrl, this.#project.secretKey, {
+    return this.#project.createClient(this.#project.baseUrl, this.#project.secretKey, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
   }

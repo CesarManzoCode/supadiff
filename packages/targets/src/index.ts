@@ -19,7 +19,34 @@ export {
   SUPABASE_JS_PACKAGE,
   POSTGRES_JS_PACKAGE,
   ensureSupaliteInstall,
+  linkSupaliteInstall,
+  loadSupabaseJsForProfile,
+  loadSupabaseJs,
+  ensureSupabaseJsInstall,
+  supabaseJsClientCacheDir,
+  supaliteProfileCacheDir,
+  type LoadedSupabaseClientFactory,
 } from "./shared/package-cache.js";
+export {
+  SUPABASE_JS_CLIENTS,
+  SUPABASE_JS_2_97_0,
+  SUPABASE_JS_2_114_0,
+  DEFAULT_SUPABASE_JS_CLIENT,
+  resolveSupabaseJsClient,
+  resolveClientContract,
+  ClientProfileError,
+  type SupabaseJsClientProfile,
+} from "./shared/supabase-js-client.js";
+export {
+  SUPALITE_PROFILES,
+  SUPALITE_PROFILE_0_9_0,
+  SUPALITE_PROFILE_0_10_0,
+  DEFAULT_SUPALITE_PROFILE,
+  resolveSupaliteProfile,
+  supaliteProfileCacheKey,
+  SupaliteProfileError,
+  type SupalitePackageProfile,
+} from "./supalite/package-profile.js";
 export { createWorkdir, type Workdir } from "./shared/workdir.js";
 export { leasePort } from "./shared/ports.js";
 

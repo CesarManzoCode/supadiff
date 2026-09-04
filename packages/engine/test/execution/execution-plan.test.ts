@@ -145,6 +145,8 @@ describe("ExecutionPlan: target identity mismatch prevents an executable plan (ย
   });
 
   it("does NOT throw when the requested and observed versions agree", () => {
+    // `twoStepScenario` pins `client: supabase-js@2.97.0`; the identity must be internally
+    // consistent with it (ยง2.7 client-identity agreement) as well as with the package version.
     const scenario = twoStepScenario();
     const spec = {
       ...fakeTargetSpec("reference", "ref"),
@@ -166,7 +168,7 @@ describe("ExecutionPlan: target identity mismatch prevents an executable plan (ย
             slot: "reference",
             spec: spec as never,
             role: "reference",
-            identity: fakeIdentity({ implementationVersion: "1.0.0" }),
+            identity: fakeIdentity({ implementationVersion: "1.0.0", clientVersion: "2.97.0" }),
             capabilityResolution: [],
           },
         ],

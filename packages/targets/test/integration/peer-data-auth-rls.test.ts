@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { createClient } from "@supabase/supabase-js";
 import { runScenario, compareStep, type TargetHandle } from "@supadiff/engine";
 import {
   parseScenarioSpec,
@@ -363,6 +364,9 @@ describe("L7 supabase-local failure-mode handling", () => {
       project,
       { put: () => "sec-x" as never, reveal: () => "", fingerprint: () => "", has: () => false },
       new Map(),
+      // This target-death probe only needs a working client; the package's own pinned
+      // 2.97.0 is fine here (the client-contract path is exercised via the driver elsewhere).
+      { createClient, version: "2.97.0" },
     );
 
     // Stack is alive: the target answers (an ordinary application error, not a harness failure).

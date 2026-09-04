@@ -1,6 +1,7 @@
 import {
   computeScenarioDigest,
   sha256OfCanonicalJson,
+  type ClientContract,
   type ComparisonPolicy,
   type ExecutionPlan,
   type IsoDateTime,
@@ -30,6 +31,33 @@ export class TargetIdentityMismatchError extends Error {
         `(§2.7), never a silently accepted drift`,
     );
     this.name = "TargetIdentityMismatchError";
+  }
+}
+
+/**
+ * Raised when the scenario's `ClientContract` (`ScenarioSpec.client`) — the single source
+ * of truth for which client library build every target must be driven through for ONE run
+ * — does not agree with a target's *observed* `TargetIdentity.clientVersion`. A peer
+ * comparison is only apples-to-apples if reference and candidate call their targets through
+ * the exact same client; a divergence otherwise could be the client's, not the target's.
+ * Like `TargetIdentityMismatchError` this is an inconclusive infrastructure outcome, never
+ * a silently accepted drift, and there is no modeled policy field that permits a client
+ * version range.
+ *
+ * Only enforced for `library: "supabase-js"` (the one client SupaDiff installs and pins)
+ * and only for targets that declare a `TargetSpec.package` — the `fake` target driver
+ * (§15.2 test infrastructure) drives no real client and its identity's `clientVersion` is
+ * a fixture placeholder.
+ */
+export class ClientIdentityMismatchError extends Error {
+  constructor(slot: StableId, library: string, requested: string, observed: string) {
+    super(
+      `target "${slot}": scenario declares client ${library}@${requested} but the target ` +
+        `provisioned and identified as client version "${observed}" — every target in a peer ` +
+        `comparison must drive the SAME client build (§2.7); this is an inconclusive ` +
+        `infrastructure outcome, never a silently accepted drift`,
+    );
+    this.name = "ClientIdentityMismatchError";
   }
 }
 
@@ -70,7 +98,7 @@ export interface BuildExecutionPlanInput {
 }
 
 /** Verifies a requested identity was not silently drifted from what was observed (§2.7). */
-function checkIdentityAgreement(target: PlanTargetInput): void {
+function checkIdentityAgreement(target: PlanTargetInput, client: ClientContract): void {
   if (!target.identity) {
     throw new IncompletePlanInputError(
       `target "${target.slot}" has no observed TargetIdentity — runtime identification and ` +
@@ -88,6 +116,22 @@ function checkIdentityAgreement(target: PlanTargetInput): void {
       target.identity.implementationVersion,
     );
   }
+  // Client contract agreement (§2.7): `ScenarioSpec.client.version` is the source of truth
+  // for the client build for this run. Scoped to `supabase-js` (the pinned/installed
+  // client) and to targets that declare a package identity — a `fake` target carries no
+  // package and its placeholder `clientVersion` is not a real client build.
+  if (
+    client.library === "supabase-js" &&
+    target.spec.package !== undefined &&
+    target.identity.clientVersion !== client.version
+  ) {
+    throw new ClientIdentityMismatchError(
+      target.slot,
+      client.library,
+      client.version,
+      target.identity.clientVersion,
+    );
+  }
 }
 
 /**
@@ -103,7 +147,7 @@ function checkIdentityAgreement(target: PlanTargetInput): void {
  * contains no secrets or live endpoints — only sanitized `TargetIdentity` facts.
  */
 export function buildExecutionPlan(input: BuildExecutionPlanInput): ExecutionPlan {
-  for (const target of input.targets) checkIdentityAgreement(target);
+  for (const target of input.targets) checkIdentityAgreement(target, input.scenario.client);
 
   const scenarioDigest = computeScenarioDigest(input.scenario);
   const policyDigest = sha256OfCanonicalJson(input.policy as never);

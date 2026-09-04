@@ -1,0 +1,127 @@
+{
+  "format": "supadiff.scenario",
+  "formatVersion": "1.0",
+  "id": "scn.supalite-signed-url-repro",
+  "revision": "1",
+  "title": "Focused repro: storage.createSignedUrl wire-contract isolation (upstream dswbx/lite-projects#64)",
+  "description": "The minimal chain that isolates Supalite's createSignedUrl wire-contract behavior with Storage RLS held out of the experiment. A service_role actor (no Auth signup, no user, no RLS policy) creates a private bucket, uploads fixture bytes, calls storage.createSignedUrl through the official @supabase/supabase-js/@supabase/storage-js client, then redeems the client-constructed URL and the redeemed bytes are compared to the uploaded bytes. Nothing else runs: no copy/move/list/remove, no download-for-truth (the upload step already reports the authoritative bytesDigest). Upstream issue: Supalite's POST /storage/v1/object/sign/* returns JSON key `signedUrl` and a `/storage/v1`-prefixed path, while the official storage-js wire contract expects `signedURL` (capital) with no prefix, so the client builds a wrong redeemable URL. This scenario only MEASURES that; the fix belongs to Supalite upstream. Runs against supabase-local (reference) and Supalite 0.9.0 / 0.10.0 via explicit package profiles.",
+  "tags": ["repro", "supalite", "storage", "signed-url", "upstream-64"],
+  "seed": "64",
+  "client": { "library": "supabase-js", "version": "2.97.0" },
+  "requirements": [
+    {
+      "capability": "storage.bucket.create",
+      "range": "^1.0.0",
+      "accept": ["exact", "experimental"]
+    },
+    {
+      "capability": "storage.object.write",
+      "range": "^1.0.0",
+      "accept": ["exact", "experimental"]
+    },
+    { "capability": "storage.object.read", "range": "^1.0.0", "accept": ["exact", "experimental"] },
+    {
+      "capability": "storage.signed-url.create",
+      "range": "^1.0.0",
+      "accept": ["exact", "experimental"]
+    }
+  ],
+  "resources": [
+    {
+      "id": "schema.storage-marker",
+      "mediaType": "application/sql",
+      "sha256": "sha256:6f07ff19d49bda589e1795c2b98251ee4dc8ced751c760ed5a8693b6b4bd7ca8",
+      "length": 61,
+      "source": {
+        "kind": "inline",
+        "value": "create table public.storage_marker (\n  id int primary key\n);\n"
+      },
+      "sensitivity": "public-fixture"
+    },
+    {
+      "id": "fixture.blob",
+      "mediaType": "application/octet-stream",
+      "sha256": "sha256:b46767475bd42f4712aaca18032b28c72cc8c4c03b937783f9ab3e80936d153c",
+      "length": 164,
+      "source": {
+        "kind": "inline",
+        "value": "c3VwYWRpZmYgc3RvcmFnZSBwZWVyLWNvbXBhcmlzb24gZml4dHVyZSBieXRlcyAAAQIgZGV0ZXJtaW5pc3RpYyBwYXlsb2FkIGZvciBieXRlLWlkZW50aXR5IGNoZWNrcyBhY3Jvc3Mgc3VwYWxpdGUgYmFja2VuZHMu"
+      },
+      "sensitivity": "public-fixture"
+    }
+  ],
+  "actors": [
+    {
+      "id": "actor.service",
+      "kind": "service",
+      "credentialSource": { "kind": "none" },
+      "initialContext": "service-key",
+      "sessionPolicy": "fresh-per-target"
+    }
+  ],
+  "steps": [
+    {
+      "id": "step.schema",
+      "kind": "schema.apply",
+      "phase": "bootstrap",
+      "input": { "resourceId": "schema.storage-marker", "mode": "authoritative" }
+    },
+    {
+      "id": "step.create-bucket",
+      "kind": "storage.createBucket",
+      "phase": "exercise",
+      "actor": "actor.service",
+      "dependsOn": ["step.schema"],
+      "input": { "bucket": "sd-repro", "public": false }
+    },
+    {
+      "id": "step.upload",
+      "kind": "storage.upload",
+      "phase": "exercise",
+      "actor": "actor.service",
+      "dependsOn": ["step.create-bucket"],
+      "input": { "bucket": "sd-repro", "path": "svc/payload.bin", "resourceId": "fixture.blob" }
+    },
+    {
+      "id": "step.sign",
+      "kind": "storage.createSignedUrl",
+      "phase": "exercise",
+      "actor": "actor.service",
+      "dependsOn": ["step.upload"],
+      "input": { "bucket": "sd-repro", "path": "svc/payload.bin", "expiresInSeconds": 120 },
+      "capture": [
+        {
+          "name": "signed-url-handle",
+          "from": { "kind": "json-pointer", "pointer": "/signedUrl" },
+          "valueType": "string",
+          "sensitivity": "secret",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "step.redeem",
+      "kind": "storage.redeemUrl",
+      "phase": "exercise",
+      "actor": "actor.service",
+      "dependsOn": ["step.sign"],
+      "input": { "signedUrlHandle": { "$ref": "capture:signed-url-handle" } }
+    }
+  ],
+  "cleanup": [],
+  "comparison": { "policyId": "policy.supalite-signed-url-repro", "policyVersion": "1" },
+  "expectedOutcomes": [],
+  "limits": {
+    "maxSteps": 10,
+    "maxWallTimeMs": 60000,
+    "maxArtifactBytes": 10000000,
+    "maxRequestsPerTarget": 30,
+    "maxHostedCostUsd": 0,
+    "maxParallelOperations": 1
+  },
+  "provenance": {
+    "origin": "upstream-derived",
+    "createdAt": "2026-09-03T00:00:00.000Z",
+    "author": "supadiff-supalite-version-profiles"
+  }
+}

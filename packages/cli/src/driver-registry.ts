@@ -1,9 +1,10 @@
-import type { ResourceDeclaration, TargetSpec } from "@supadiff/spec";
+import type { ClientContract, ResourceDeclaration, TargetSpec } from "@supadiff/spec";
 import { FakeTargetDriver, type FakeScript } from "@supadiff/engine";
 import type { TargetDriver } from "@supadiff/engine/spi";
 import {
   createSupaliteDriver,
   createSupabaseHostedDriver,
+  createSupabaseLocalDriver,
   type SupaliteTargetKind,
 } from "@supadiff/targets";
 
@@ -20,10 +21,16 @@ const SUPALITE_KINDS = new Set<string>([
  * whole fixture script inline in `config` (test infrastructure, §15.2); Supalite recipes
  * carry only kind/package/backend/config — the driver reconstructs a fresh real target
  * from that, plus the scenario's own resources for schema/migration steps.
+ *
+ * `client` is the scenario's `ScenarioSpec.client` — threaded here so real drivers drive
+ * their target through the exact `@supabase/supabase-js` build the scenario pins (never an
+ * env var). The planner independently fails the run closed if an observed
+ * `TargetIdentity.clientVersion` disagrees with it.
  */
 export function buildDriverForSpec(
   spec: TargetSpec,
   scenarioResources: readonly ResourceDeclaration[],
+  client?: ClientContract,
 ): TargetDriver {
   if (spec.kind === "fake") {
     const config = spec.config as unknown as { scriptId: string; script?: FakeScript };
@@ -37,7 +44,11 @@ export function buildDriverForSpec(
     return createSupaliteDriver(spec.kind as SupaliteTargetKind, {
       scenarioResources,
       postgresUrl,
+      client,
     });
+  }
+  if (spec.kind === "supabase-local") {
+    return createSupabaseLocalDriver({ scenarioResources, client });
   }
   if (spec.kind === "supabase-hosted") {
     // Hosted is opt-in only: the driver itself enforces `SUPADIFF_HOSTED=1`,

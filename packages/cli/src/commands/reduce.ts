@@ -66,7 +66,7 @@ export async function reduceCommand(args: ParsedArgs): Promise<number> {
   const ctx: ReductionContext = {
     referenceSpec,
     candidateSpec,
-    buildDriver: (spec, resources) => buildDriverForSpec(spec, resources),
+    buildDriver: (spec, resources) => buildDriverForSpec(spec, resources, artifact.scenario.client),
     policy,
     knownDivergences,
     expectedSignature,
