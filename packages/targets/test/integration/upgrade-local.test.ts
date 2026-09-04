@@ -39,6 +39,24 @@ describe("L8 verify-upgrade: Supalite → real `lite upgrade` → Supabase-local
     });
   });
 
+  it("--supalite-version 0.10.0 governs the dry-run's source identity (no mutation, no network)", async () => {
+    const report = await verifyUpgrade({ supaliteVersion: "0.10.0" });
+    expect(report.dryRun).toBe(true);
+    expect(report.mutated).toBe(false);
+    expect(report.targets[0]).toMatchObject({
+      role: "source",
+      implementation: "@supabase/lite",
+      implementationVersion: "0.10.0",
+      clientVersion: "2.114.0",
+    });
+  });
+
+  it("an unregistered Supalite version fails closed before any mutation", async () => {
+    await expect(verifyUpgrade({ supaliteVersion: "9.9.9" })).rejects.toThrow(
+      /Unregistered @supabase\/lite version/,
+    );
+  });
+
   it("required Storage preservation is rejected BEFORE any mutation", async () => {
     const report = await verifyUpgrade({ execute: true, requireStoragePreservation: true });
     expect(report.mutated).toBe(false);

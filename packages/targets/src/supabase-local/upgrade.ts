@@ -10,13 +10,19 @@ import {
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { createClient } from "@supabase/supabase-js";
+import type { createClient as CreateClientFn } from "@supabase/supabase-js";
 import { spawnManaged } from "../shared/process.js";
 import { leasePort } from "../shared/ports.js";
-import { ensureSupaliteInstall, SUPALITE_PACKAGE } from "../shared/package-cache.js";
-// L8 verifies the `@supabase/lite@0.9.0` → Supabase-local transition specifically; the
-// source is always the v1.0.0 baseline profile, passed explicitly rather than defaulted.
-import { SUPALITE_PROFILE_0_9_0 } from "../supalite/package-profile.js";
+import { ensureSupaliteInstall, loadSupabaseJsForProfile } from "../shared/package-cache.js";
+// L8 verifies the `@supabase/lite` → Supabase-local transition for whichever registered
+// Supalite package profile the caller selects (`VerifyUpgradeOptions.supaliteVersion`);
+// the v1.0.0 baseline profile is only the default when none is given.
+import {
+  EXPECTED_SUPALITE_PACKAGE_NAME,
+  resolveSupaliteProfile,
+  SUPALITE_PROFILE_0_9_0,
+  type SupalitePackageProfile,
+} from "../supalite/package-profile.js";
 import {
   ensureSupabaseCli,
   supabaseCliBin,
@@ -82,6 +88,15 @@ export interface VerifyUpgradeOptions {
   workdirParentDir?: string;
   /** Pinned `supabase` CLI version `lite upgrade --target local` is pointed at. */
   supabaseCliVersion?: string;
+  /**
+   * Selects the registered `SupalitePackageProfile` (`@supabase/lite` + its paired
+   * `@supabase/supabase-js` client) the entire Supalite side of the workflow runs
+   * against — package installation, S0/B/U provisioning, and the client every
+   * Supalite-side comparison is made through. Must resolve to an already-registered
+   * profile (`supalite/package-profile.ts`); an unregistered version fails closed
+   * (`SupaliteProfileError`). Omitted → the historical `0.9.0` baseline (unchanged).
+   */
+  supaliteVersion?: string;
   readinessTimeoutMs?: number;
   /** Sink for progress lines (defaults to no-op); the CLI passes `process.stderr.write`. */
   log?: (line: string) => void;
@@ -102,6 +117,8 @@ export interface UpgradeTargetIdentity {
   backend?: string;
   workdir?: string;
   cliVersion?: string;
+  /** The `@supabase/supabase-js` version this identity was driven/compared through. */
+  clientVersion?: string;
   projectId?: string;
   apiUrl?: string;
 }
@@ -219,14 +236,30 @@ function parseEnvKeys(workdir: string): { publishableKey: string; secretKey: str
 }
 
 /** Copies a Supalite workdir tree (minus node_modules), re-links the shared package cache. */
-async function cloneWorkdir(src: string, dst: string): Promise<void> {
+async function cloneWorkdir(
+  src: string,
+  dst: string,
+  profile: SupalitePackageProfile,
+): Promise<void> {
   cpSync(src, dst, {
     recursive: true,
     filter: (from) => path.basename(from) !== "node_modules",
   });
   rmSync(path.join(dst, "node_modules"), { recursive: true, force: true });
-  const cacheDir = await ensureSupaliteInstall(SUPALITE_PROFILE_0_9_0);
+  const cacheDir = await ensureSupaliteInstall(profile);
   symlinkSync(path.join(cacheDir, "node_modules"), path.join(dst, "node_modules"), "dir");
+}
+
+/**
+ * Resolves the registered `SupalitePackageProfile` a `verifyUpgrade({ supaliteVersion })`
+ * call selects, via the existing registry (`resolveSupaliteProfile`) — no locally
+ * re-declared versions, hashes or integrities. No version → the historical `0.9.0`
+ * baseline. An unregistered version fails closed with the same error the rest of
+ * SupaDiff uses for this (`SupaliteProfileError`).
+ */
+function resolveVerifyUpgradeProfile(version: string | undefined): SupalitePackageProfile {
+  if (version === undefined) return SUPALITE_PROFILE_0_9_0;
+  return resolveSupaliteProfile({ name: EXPECTED_SUPALITE_PACKAGE_NAME, version });
 }
 
 function repointApiPort(workdir: string, port: number): void {
@@ -278,13 +311,15 @@ export async function verifyUpgrade(
   const log = options.log ?? (() => {});
   const readiness = options.readinessTimeoutMs ?? 180_000;
   const cliVersion = options.supabaseCliVersion ?? SUPABASE_CLI_PACKAGE.version;
+  const profile = resolveVerifyUpgradeProfile(options.supaliteVersion);
 
   const sourceIdentity: UpgradeTargetIdentity = {
     role: "source",
     kind: "supalite-sqlite-postgres",
-    implementation: SUPALITE_PACKAGE.name,
-    implementationVersion: SUPALITE_PACKAGE.version,
-    packageIntegrity: SUPALITE_PACKAGE.integrity,
+    implementation: profile.lite.name,
+    implementationVersion: profile.lite.version,
+    packageIntegrity: profile.lite.integrity,
+    clientVersion: profile.client.version,
     backend: "sqlite-postgres",
   };
 
@@ -354,9 +389,16 @@ export async function verifyUpgrade(
     kind: "supabase-local",
     implementation: SUPABASE_CLI_PACKAGE.name,
     implementationVersion: cliVersion,
+    clientVersion: profile.client.version,
     workdir: cWorkdir,
   };
   targets.push(baselineIdentity, destIdentity);
+
+  // The client every Supalite-side AND destination comparison is made through — loaded
+  // from the selected profile's own install, never the workspace's static dependency, so
+  // a 0.10.0 run genuinely compares through @supabase/supabase-js@2.114.0 end to end.
+  // `loadSupabaseJsForProfile` itself asserts the loaded version against the profile.
+  const { createClient } = await loadSupabaseJsForProfile(profile);
 
   const cliCacheDir = await ensureSupabaseCli(cliVersion);
   const supabaseBin = supabaseCliBin(cliCacheDir);
@@ -425,7 +467,7 @@ export async function verifyUpgrade(
       "sqlite-postgres",
       supaliteConfig(readiness),
       undefined,
-      SUPALITE_PROFILE_0_9_0,
+      profile,
     );
     await applySchemaResource(s0, FIXTURE_SCHEMA);
     await startServer(s0);
@@ -492,8 +534,8 @@ export async function verifyUpgrade(
     // --- clone S0 into B and U; close S0 ---
     log("cloning S0 into baseline B and upgrade-source U...\n");
     await stopServer(s0);
-    await cloneWorkdir(s0Workdir, bWorkdir);
-    await cloneWorkdir(s0Workdir, uWorkdir);
+    await cloneWorkdir(s0Workdir, bWorkdir, profile);
+    await cloneWorkdir(s0Workdir, uWorkdir, profile);
     const bPort = await leasePort();
     const uPort = await leasePort();
     repointApiPort(bWorkdir, bPort);
@@ -646,10 +688,11 @@ export async function verifyUpgrade(
       publishableKey: bKeys.publishableKey,
       secretKey: bKeys.secretKey,
       config: supaliteConfig(readiness),
-      // Retained byte-clone of S0 (the 0.9.0 baseline); it links the same package cache.
-      profile: SUPALITE_PROFILE_0_9_0,
+      // Retained byte-clone of S0, provisioned against the selected profile; it links
+      // that profile's own package cache.
+      profile,
       createClient,
-      clientVersion: SUPALITE_PROFILE_0_9_0.client.version,
+      clientVersion: profile.client.version,
     };
     await startServer(baseline);
     const bService = createClient(baseline.baseUrl, baseline.secretKey, {
@@ -797,11 +840,12 @@ export async function verifyUpgrade(
     // --- same-behavior scenario lockstep on B and C ---
     log("running the owner-scoped-RLS scenario lockstep on B and C...\n");
     const bBehavior = await runOwnerRlsScenario(
+      createClient,
       baseline.baseUrl,
       baseline.publishableKey,
       ownerEmail,
     );
-    const cBehavior = await runOwnerRlsScenario(cred.apiUrl, cred.anonKey, ownerEmail);
+    const cBehavior = await runOwnerRlsScenario(createClient, cred.apiUrl, cred.anonKey, ownerEmail);
     const lockstepOk =
       bBehavior.insertOk === cBehavior.insertOk &&
       bBehavior.insertOk &&
@@ -864,6 +908,7 @@ interface OwnerRlsBehavior {
  * show the owner every owned row and the anon none.
  */
 async function runOwnerRlsScenario(
+  createClient: typeof CreateClientFn,
   baseUrl: string,
   anonKey: string,
   ownerEmail: string,
