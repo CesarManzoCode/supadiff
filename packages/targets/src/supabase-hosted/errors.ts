@@ -86,6 +86,26 @@ export class HostedProjectDriftError extends Error {
   }
 }
 
+/**
+ * A hosted `schema.apply` applied the schema but the PostgREST Data API never converged on
+ * it: repeated probes still reported the schema-cache-not-ready condition (PGRST205 /
+ * equivalent "missing relation") after the bounded attempt budget (issue #6). `schema.apply`
+ * must fail closed rather than return success while the applied schema is still unusable.
+ */
+export class HostedSchemaReadinessError extends Error {
+  readonly table: string;
+  readonly attempts: number;
+  constructor(table: string, attempts: number) {
+    super(
+      `hosted schema readiness: table "${table}" was still not visible through the Data API ` +
+        `after ${attempts} attempt(s) — the PostgREST schema cache did not converge in time.`,
+    );
+    this.name = "HostedSchemaReadinessError";
+    this.table = table;
+    this.attempts = attempts;
+  }
+}
+
 /** The Supabase Management API returned a non-2xx or was unreachable. */
 export class ManagementApiError extends Error {
   readonly status: number;

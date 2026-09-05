@@ -28,9 +28,21 @@ import { hostedSecretLiterals } from "./credentials.js";
 import { HostedRateLimitError } from "./errors.js";
 import {
   cleanupHostedProject,
+  listPublicBaseTables,
   nodeRuntimeIdentity,
   type HostedProvisionedProject,
 } from "./provision.js";
+import { awaitSchemaReadiness, type SchemaReadinessProbeResult } from "./schema-readiness.js";
+
+/**
+ * Bounded poll for hosted `schema.apply` readiness (issue #6): PostgREST's schema-cache
+ * reload triggered by `notify pgrst, 'reload schema'` is asynchronous, so a `schema.apply`
+ * that returns immediately can race the very next Data API operation. 20 attempts × 250ms
+ * gives up to ~5s for the cache to converge — small relative to the run's overall budget,
+ * but enough headroom for real hosted reload latency — before failing closed.
+ */
+const SCHEMA_READINESS_MAX_ATTEMPTS = 20;
+const SCHEMA_READINESS_DELAY_MS = 250;
 
 /**
  * The same Data-API exposure grants `supabase-local` applies after every scenario schema
@@ -149,6 +161,26 @@ export class SupabaseHostedTargetSession implements TargetSession {
     });
   }
 
+  /**
+   * A single Data-API visibility probe for one `public` table (issue #6 readiness poll,
+   * service-role so RLS is never a confounder). `limit(0)` keeps the request cheap while
+   * still returning a full response body — unlike a HEAD request, whose empty body would
+   * hide the `PGRST205` code a HEAD 404 carries no payload for.
+   */
+  async #probeTableReadiness(table: string): Promise<SchemaReadinessProbeResult> {
+    this.#project.budget.spend();
+    const res = await this.#serviceClient().from(table).select("*", { count: "exact" }).limit(0);
+    if (!res.error) return { status: "ready" };
+    if (res.error.code === "PGRST205") return { status: "not-ready" };
+    return {
+      status: "error",
+      error: new Error(
+        `hosted schema readiness: Data API probe for "${table}" failed with an unrelated ` +
+          `error: ${res.error.message} (code=${res.error.code ?? "none"})`,
+      ),
+    };
+  }
+
   async #handleSchemaApply(input: JsonObject): Promise<RawOperationResult> {
     const resource = this.#resources.get(input["resourceId"] as StableId);
     if (!resource) {
@@ -164,6 +196,13 @@ export class SupabaseHostedTargetSession implements TargetSession {
         this.#project.projectRef,
         `${sql}\n${DATA_API_GRANTS}`,
       );
+      const tables = await listPublicBaseTables(this.#project.management, this.#project.projectRef);
+      await awaitSchemaReadiness({
+        tables,
+        probe: (table) => this.#probeTableReadiness(table),
+        maxAttempts: SCHEMA_READINESS_MAX_ATTEMPTS,
+        delayMs: SCHEMA_READINESS_DELAY_MS,
+      });
       this.#project.evidence.note("schema.apply", {
         resourceId: input["resourceId"],
         bytes: sql.length,
