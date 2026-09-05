@@ -111,13 +111,21 @@ export {
   HostedCredentialsMissingError,
   HostedResidentResourcesError,
   HostedProjectDriftError,
+  HostedSchemaReadinessError,
   ManagementApiError,
 } from "./supabase-hosted/errors.js";
+export {
+  awaitSchemaReadiness,
+  type SchemaReadinessProbe,
+  type SchemaReadinessProbeResult,
+  type SchemaReadinessOptions,
+} from "./supabase-hosted/schema-readiness.js";
 export {
   provisionHostedProject,
   cleanupHostedProject,
   recoverHostedNamespace,
   hostedServiceClient,
+  listPublicBaseTables,
   type HostedProvisionedProject,
   type HostedResourceSnapshot,
   type HostedCleanupResult,

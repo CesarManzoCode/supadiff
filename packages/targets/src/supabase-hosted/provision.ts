@@ -76,22 +76,36 @@ function identOf(info: HostedProjectInfo): HostedProjectIdentity {
   };
 }
 
-async function captureSnapshot(
+/**
+ * The current `public` base tables, straight from `information_schema` — the same source of
+ * truth the pre-run census uses, so a caller (e.g. hosted schema-readiness polling, §issue
+ * #6) never has to regex-parse an applied SQL resource to know which relations should now be
+ * visible through the Data API.
+ */
+export async function listPublicBaseTables(
   management: ManagementClient,
   ref: string,
-): Promise<HostedResourceSnapshot> {
+): Promise<string[]> {
   const tables = await management.runQuery(
     ref,
     "select table_name as name from information_schema.tables " +
       "where table_schema = 'public' and table_type = 'BASE TABLE' order by 1",
   );
+  return tables.rows.map((r) => String(r["name"]));
+}
+
+async function captureSnapshot(
+  management: ManagementClient,
+  ref: string,
+): Promise<HostedResourceSnapshot> {
+  const publicTables = await listPublicBaseTables(management, ref);
   const buckets = await management.runQuery(
     ref,
     "select id as name from storage.buckets order by 1",
   );
   const users = await management.runQuery(ref, "select id::text as id from auth.users order by 1");
   return {
-    publicTables: tables.rows.map((r) => String(r["name"])),
+    publicTables,
     storageBuckets: buckets.rows.map((r) => String(r["name"])),
     authUserIds: users.rows.map((r) => String(r["id"])),
   };
