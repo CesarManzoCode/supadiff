@@ -53,8 +53,13 @@ they were implemented in full:
 upgrade.ts`): mandatory dry-run, then the real Architecture Contract §12
   transition — a file-backed `supalite-sqlite-postgres` project is cloned
   into a retained **baseline B** and an **upgrade-source U**, then the real
-  `lite upgrade --target local` (`@supabase/lite@0.9.0`) migrates U into a
-  **fresh Supabase-local stack C**. Verifies: source workdir untouched,
+  `lite upgrade --target local` migrates U into a **fresh Supabase-local
+  stack C**. `--supalite-version <version>` selects which registered
+  `SupalitePackageProfile` (`@supabase/lite` + its paired
+  `@supabase/supabase-js` client, `packages/targets/src/supalite/
+package-profile.ts`) governs the whole Supalite side of the run — omitted,
+  it defaults to the historical `@supabase/lite@0.9.0` baseline; an
+  unregistered version fails closed. Verifies: source workdir untouched,
   baseline retained, row IDs + Auth logical subject preserved, deliberate
   corruption detected, sessions _not_ preserved + the actor re-authenticates
   for the same subject, RLS behavior lockstep B vs C. The serial-sequence
@@ -64,15 +69,39 @@ upgrade.ts`): mandatory dry-run, then the real Architecture Contract §12
   when required. The old Postgres 15→17 `pg_dump` helper is removed — it was
   never §12.
 
-## One real command against a fake target
+## Requirements
+
+- Node 22 (`>=22.0.0 <23.0.0`)
+- pnpm 9.15.0 (pinned in `packageManager`; `corepack enable` gets you the
+  pinned version automatically)
+- Docker, for anything that touches `supabase-local` or `verify-upgrade`
+  (L7, L8, L11) — not needed for `supadiff run` against fake targets or for
+  the Supalite-only acceptance tests
+
+## Setup
 
 ```bash
-corepack pnpm install --frozen-lockfile
-pnpm --filter @supadiff/spec build
-pnpm --filter @supadiff/engine build
-pnpm --filter supadiff build
+corepack enable
+pnpm install --frozen-lockfile
+pnpm build
 
-node packages/cli/dist/bin.js run test/fixtures/basic.json \
+# make the `supadiff` command available on PATH (one-time; standard pnpm
+# workspace mechanism, not an installer):
+pnpm setup            # only if `pnpm link --global` below can't find a global bin dir yet
+cd packages/cli && pnpm link --global && cd ../..
+
+supadiff --help
+```
+
+`pnpm link --global` symlinks this workspace's `packages/cli` (whose
+`package.json` declares `"bin": { "supadiff": "./dist/bin.js" }`) into
+pnpm's global bin directory. From here on, every example below is the real
+`supadiff` command — never `node packages/cli/dist/bin.js`.
+
+## Quick start: one command against a fake target
+
+```bash
+supadiff run test/fixtures/basic.json \
   --target test/fixtures/fake-reference.json \
   --target test/fixtures/fake-match.json \
   --policy test/fixtures/basic-policy.json \
@@ -84,11 +113,35 @@ scripted fake targets in lockstep, redacts and projects every observation,
 compares them under a real (if small) semantic rule policy, and writes a
 deterministic evidence bundle to `./supadiff-artifacts/<run-id>.supadiff/`.
 
-## Real commands against real targets
+## `verify-upgrade`: reproduce a real Supalite → Supabase-local investigation
+
+`supadiff verify-upgrade` is L8's public surface (see "L7/L8" above) — the
+real Architecture Contract §12 transition, against Docker. Dry-run is
+mandatory; nothing is provisioned or mutated without `--execute`.
 
 ```bash
-corepack pnpm install --frozen-lockfile
+# L8 dry-run against the default profile (@supabase/lite@0.9.0) — prints the
+# §12 workflow, mutates nothing
+supadiff verify-upgrade
 
+# Reproduce the div.lite-upgrade-local-sequence-not-reset investigation
+# against @supabase/lite@0.10.0 + @supabase/supabase-js@2.114.0 — the exact
+# registered profile in packages/targets/src/supalite/package-profile.ts
+supadiff verify-upgrade --supalite-version 0.10.0 --execute --output json
+```
+
+An unregistered `--supalite-version` fails closed with a clear error rather
+than running an unpinned combination. See `docs/DIVERGENCES.md` for the
+known-divergence registry and `docs/TARGETS.md` for the capability matrix
+and the `supabase-local` driver architecture.
+
+## Development / acceptance tests
+
+These are the acceptance gates this repository is built against, not the
+product's normal interface — a maintainer investigating or reproducing
+behavior should reach for `supadiff <command>` above, not these.
+
+```bash
 # Real @supabase/lite@0.9.0 subprocesses, no Docker
 pnpm test:integration:supalite            # L6: all 4 Supalite backends
 pnpm test:generators && pnpm test:generated-smoke   # L12: generated scenarios + one live sample
@@ -99,9 +152,6 @@ pnpm test:fault-lab:reduce                # L10: state-aware reducer
 pnpm test:integration:peer-data-auth-rls  # L7: Supalite <-> supabase-local (Data+Auth+RLS) + failure modes
 pnpm test:integration:upgrade-local       # L8: verify-upgrade, real Supalite -> lite upgrade -> supabase-local
 pnpm test:integration:peer-storage        # L11: Supalite x2 and Supalite <-> supabase-local Storage
-
-supadiff verify-upgrade             # L8 dry-run (prints the §12 workflow, mutates nothing)
-supadiff verify-upgrade --execute   # L8 real transition: Supalite -> lite upgrade -> supabase-local
 
 # Real hosted Supabase project (opt-in) — needs SUPADIFF_HOSTED_ACCESS_TOKEN + SUPADIFF_HOSTED_PROJECT_REF
 SUPADIFF_HOSTED=1 pnpm test:integration:hosted-smoke   # L13: real supabase-hosted Data+Auth+RLS + refusals + cleanup/recovery
@@ -114,8 +164,7 @@ pnpm release:evidence               # L14: verify the recorded results + (re)gen
 
 Every one of these talks to a real target over real HTTP via the real
 `@supabase/supabase-js@2.97.0` client — none of it is scripted. See
-`docs/TESTING.md` for what each command proves and `docs/TARGETS.md` for the
-capability matrix and the `supabase-local` driver architecture.
+`docs/TESTING.md` for what each command proves.
 
 ## Artifact example
 

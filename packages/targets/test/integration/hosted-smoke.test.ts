@@ -260,13 +260,35 @@ describe.skipIf(!HOSTED || !HAS_CREDS)(
       expect(target.identity?.implementation).toBe("supabase-platform");
 
       // Real RLS enforcement, measured on the raw evidence, independent of any comparator.
-      const rows = (step: string) =>
-        (target.rawObservations.get(`${step}:1`)!.transport.responseBody as { rows: unknown[] })
-          .rows;
-      expect(rows("step.select-owner"), "owner sees exactly the owned row").toHaveLength(1);
-      expect(rows("step.select-anon"), "anonymous caller sees nothing — RLS enforced").toHaveLength(
-        0,
+      // `result.state === "complete"` only means the engine ran every step — an
+      // `application-error` (e.g. a real hosted PostgREST rejection) still counts as a
+      // completed step, so each Data observation's outcome must be checked explicitly
+      // before trusting its `responseBody.rows` (a failed request reports `rows: null`).
+      function successfulRows(step: string): unknown[] {
+        const obs = target.rawObservations.get(`${step}:1`);
+        expect(obs, `no raw observation recorded for ${step}:1`).toBeDefined();
+        const { outcome, transport } = obs!;
+        expect(
+          outcome.category,
+          `${step} was not a success: category=${outcome.category} status=${transport.status} ` +
+            `responseBody=${JSON.stringify(transport.responseBody)}`,
+        ).toBe("success");
+        const body = transport.responseBody as { rows?: unknown } | undefined;
+        expect(
+          Array.isArray(body?.rows),
+          `${step} succeeded but responseBody.rows is not an array: ${JSON.stringify(body)}`,
+        ).toBe(true);
+        return (body as { rows: unknown[] }).rows;
+      }
+      successfulRows("step.insert");
+      successfulRows("step.readback");
+      expect(successfulRows("step.select-owner"), "owner sees exactly the owned row").toHaveLength(
+        1,
       );
+      expect(
+        successfulRows("step.select-anon"),
+        "anonymous caller sees nothing — RLS enforced",
+      ).toHaveLength(0);
 
       // Deterministic cleanup: the measured owned-resource census returns to the pre-run empty
       // state — 0 public tables, 0 auth users, 0 Storage buckets, 0 SupaDiff ownership schema.

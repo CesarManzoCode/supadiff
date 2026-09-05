@@ -72,7 +72,7 @@ for (const file of DOC_FILES) {
 
 const PNPM_REF = /`pnpm (?:run )?([a-z][a-z0-9:-]+)`/g;
 const SUPADIFF_REF = /`supadiff ([a-z][a-z0-9-]+)/g;
-const PNPM_IGNORE = new Set(["install", "run", "check", "build", "test", "lint"]);
+const PNPM_IGNORE = new Set(["install", "run", "check", "build", "test", "lint", "setup", "link"]);
 
 for (const file of DOC_FILES) {
   if (!existsSync(path.join(ROOT, file))) continue;

@@ -9,10 +9,15 @@ import { EXIT_OK, EXIT_BEHAVIORAL_POLICY_VIOLATION, EXIT_INCONCLUSIVE } from "..
  *
  *   file-backed Supalite (supalite-sqlite-postgres)
  *     → clone into a retained baseline B and an upgrade-source U
- *     → real `lite upgrade --target local` from `@supabase/lite@0.9.0` into a fresh
- *       Supabase-local stack C (the pinned `supabase` CLI)
+ *     → real `lite upgrade --target local` from the selected `@supabase/lite` package
+ *       profile into a fresh Supabase-local stack C (the pinned `supabase` CLI)
  *     → preservation comparison (row IDs, sequence next-use, Auth logical subject)
  *     → same-behavior owner-scoped-RLS scenario run lockstep on B and C.
+ *
+ * `--supalite-version <version>` selects a registered `SupalitePackageProfile`
+ * (`@supabase/lite` + its paired `@supabase/supabase-js` client) that governs the whole
+ * Supalite side of the run; an unregistered version fails closed. Omitted → the
+ * historical `@supabase/lite@0.9.0` baseline (unchanged v1.0.0 behavior).
  *
  * Sessions are NOT migrated (`migrateSessions = false`): the pre-upgrade token must be
  * rejected by C and the fixture actor re-authenticates. Storage preservation is
@@ -26,6 +31,7 @@ export async function verifyUpgradeCommand(args: ParsedArgs): Promise<number> {
     execute: args.upgrade?.execute ?? false,
     requireStoragePreservation: args.upgrade?.requireStorage ?? false,
     workdirParentDir: args.upgrade?.workdirParent,
+    supaliteVersion: args.upgrade?.supaliteVersion,
     log: (line) => {
       if (args.flags.output === "human" && !args.flags.quiet) process.stderr.write(line);
     },

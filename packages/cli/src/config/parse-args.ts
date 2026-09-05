@@ -23,6 +23,8 @@ export interface ParsedArgs {
     workdirParent?: string;
     /** Declare the workflow requires Storage preservation (rejected before mutation). */
     requireStorage: boolean;
+    /** Selects a registered Supalite package profile by `@supabase/lite` version (`--supalite-version`). Omitted → the historical 0.9.0 baseline. */
+    supaliteVersion?: string;
   };
 }
 
@@ -54,6 +56,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
   let upExecute = false;
   let upWorkdirParent: string | undefined;
   let upRequireStorage = false;
+  let upSupaliteVersion: string | undefined;
 
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i]!;
@@ -67,6 +70,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     else if (arg === "--workdir-parent" || arg === "--dest-dir") upWorkdirParent = rest[++i];
     else if (arg === "--execute") upExecute = true;
     else if (arg === "--require-storage") upRequireStorage = true;
+    else if (arg === "--supalite-version") upSupaliteVersion = rest[++i];
     else if (arg === "--quiet") quiet = true;
     else if (arg === "--no-color") noColor = true;
     else if (BOOLEAN_FLAGS.has(arg)) {
@@ -88,6 +92,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
       execute: upExecute,
       workdirParent: upWorkdirParent,
       requireStorage: upRequireStorage,
+      supaliteVersion: upSupaliteVersion,
     },
   };
 }
