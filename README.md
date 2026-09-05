@@ -1,6 +1,6 @@
 # SupaDiff
 
-[Supalite](https://github.com/supabase-community/lite) promises to behave
+Supalite promises to behave
 like real Supabase, but "compatible" is a claim, not a guarantee. SupaDiff
 checks that claim directly: it runs the same scenario against two real
 targets — Supalite and a real Supabase stack (local via Docker, or a real
