@@ -1,8 +1,45 @@
 # SupaDiff
 
-SupaDiff is a deterministic, capability-aware runner for comparing observable
-application behavior across stateful scenario executions. It is not a request
-diff, a schema diff, an upstream-suite replacement, or a generic fuzzer.
+Supalite promises to behave
+like real Supabase, but "compatible" is a claim, not a guarantee. SupaDiff
+checks that claim directly: it runs the same scenario against two real
+targets — Supalite and a real Supabase stack (local via Docker, or a real
+hosted Supabase project) — and compares their _observable_ behavior
+(HTTP responses, redacted payloads, byte-for-byte storage content) instead of
+comparing source code or specs. It is a deterministic, capability-aware
+runner, not a request diff, a schema diff, an upstream-suite replacement, or
+a generic fuzzer.
+
+This isn't hypothetical: SupaDiff has already found real cross-target bugs.
+
+- **Signed URL incompatibility.** Supalite 0.9.0's storage sign endpoint
+  returns the JSON key `signedUrl` (lowercase) where the real Supabase
+  Storage API returns `signedURL`. The official `@supabase/supabase-js`
+  client only reads the capitalized key, so redeeming a signed URL through
+  Supalite silently serves the wrong content with a `200 OK` instead of
+  failing (`docs/DIVERGENCES.md`, `div.supalite-signed-url-key-name*`).
+- **`lite upgrade` doesn't preserve the serial sequence**
+  ([dswbx/lite-projects#69](https://github.com/dswbx/lite-projects/issues/69)).
+  Migrating a file-backed Supalite project to a real Supabase-local stack
+  moves the rows correctly but leaves the destination's serial sequence at
+  its start value, so the first unqualified insert after upgrade collides on
+  a duplicate key (`div.lite-upgrade-local-sequence-not-reset`).
+
+Both are registered, reproducible known-divergences — not papered over, not
+guessed from reading source.
+
+## Quick example
+
+```bash
+supadiff verify-upgrade
+```
+
+This dry-runs the real Architecture Contract §12 transition — Supalite →
+`lite upgrade` → Supabase-local — against Docker without mutating anything,
+and prints exactly what a real upgrade would do (add `--execute` to run it
+for real). See "`verify-upgrade`: reproduce a real Supalite → Supabase-local
+investigation" below for the full command and the "Quick start" section for
+a fake-target example that needs no Docker at all.
 
 ## What is proven right now
 
